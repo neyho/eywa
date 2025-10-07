@@ -139,7 +139,7 @@ List of available versions. '*' installed, '-' not installed
 
 To install some version run
 ```text
-eywa server -s 0.5.0
+eywa server -s 0.5.2
 ```
 
 eywa server server is installed, now we need to initialize EYWA IAM and Datacraft. So we should run:
