@@ -1,35 +1,35 @@
 (ns neyho.eywa.core
   (:require
-   [babashka.fs :as fs]
-   [clojure.string :as str]
-   [clojure.tools.logging :as log]
-   [clojure.java.shell :refer [sh]]
-   [environ.core :refer [env]]
-   [patcho.patch :as patch]
-   neyho.eywa.transit
-   neyho.eywa
-   [neyho.eywa.env :as env]
-   neyho.eywa.lacinia
-   neyho.eywa.server
-   neyho.eywa.data
-   neyho.eywa.db.postgres
-   neyho.eywa.dataset
-   neyho.eywa.dataset.core
-   neyho.eywa.dataset.encryption
-   neyho.eywa.dataset.default-model
-   neyho.eywa.dataset.graphql
-   neyho.eywa.dataset.postgres
-   neyho.eywa.dataset.postgres.query
-   neyho.eywa.iam
-   neyho.eywa.iam.uuids
-   neyho.eywa.iam.access
-   neyho.eywa.iam.oauth.store
-   [neyho.eywa.update :as update]
-   [neyho.eywa.health :as health]
-   [neyho.eywa.iam.oauth :as oauth])
+    [babashka.fs :as fs]
+    [clojure.java.shell :refer [sh]]
+    [clojure.string :as str]
+    [clojure.tools.logging :as log]
+    [environ.core :refer [env]]
+    neyho.eywa
+    neyho.eywa.data
+    neyho.eywa.dataset
+    neyho.eywa.dataset.core
+    neyho.eywa.dataset.default-model
+    neyho.eywa.dataset.encryption
+    neyho.eywa.dataset.graphql
+    neyho.eywa.dataset.postgres
+    neyho.eywa.dataset.postgres.query
+    neyho.eywa.db.postgres
+    [neyho.eywa.env :as env]
+    [neyho.eywa.health :as health]
+    neyho.eywa.iam
+    neyho.eywa.iam.access
+    [neyho.eywa.iam.oauth :as oauth]
+    neyho.eywa.iam.oauth.store
+    neyho.eywa.iam.uuids
+    neyho.eywa.lacinia
+    neyho.eywa.server
+    neyho.eywa.transit
+    [neyho.eywa.update :as update]
+    [patcho.patch :as patch])
   (:gen-class :main true))
 
-(patch/current-version :eywa/core "0.5.2")
+(patch/current-version :eywa/core "0.5.3")
 
 (defn setup
   ([] (setup (neyho.eywa.db.postgres/from-env)))
@@ -46,50 +46,50 @@
 
 (comment
   (set-superuser
-   {:username "admin"
-    :password "admin"}))
+    {:username "admin"
+     :password "admin"}))
 
 (defn add-eywa-client-redirects
   ([]
    (add-eywa-client-redirects
-    {:redirections (when-some [redirects (not-empty (env :eywa-iam-allowed-redirections
-                                                         (env :eywa-oauth-allowed-redirections)))]
-                     (let [redirects (str/split redirects #"\s*,\s*")]
-                       (map str/trim redirects)))
-     :logout (when-some [redirects (not-empty (env :eywa-iam-allowed-logouts
-                                                   (env :eywa-oauth-allowed-logouts)))]
-               (let [redirects (str/split redirects #"\s*,\s*")]
-                 (map str/trim redirects)))}))
+     {:redirections (when-some [redirects (not-empty (env :eywa-iam-allowed-redirections
+                                                          (env :eywa-oauth-allowed-redirections)))]
+                      (let [redirects (str/split redirects #"\s*,\s*")]
+                        (map str/trim redirects)))
+      :logout (when-some [redirects (not-empty (env :eywa-iam-allowed-logouts
+                                                    (env :eywa-oauth-allowed-logouts)))]
+                (let [redirects (str/split redirects #"\s*,\s*")]
+                  (map str/trim redirects)))}))
   ([{:keys [redirections logout]}]
    (when (some not-empty [redirections logout])
      (let [client (neyho.eywa.dataset/get-entity
-                   neyho.eywa.iam.uuids/app
-                   {:id "MUMADPADAKQHSDFDGFAEJZJXUSFJGFOOYTWVAUDEFVPURUOP"}
-                   {:euuid nil
-                    :settings nil})
+                    neyho.eywa.iam.uuids/app
+                    {:id "MUMADPADAKQHSDFDGFAEJZJXUSFJGFOOYTWVAUDEFVPURUOP"}
+                    {:euuid nil
+                     :settings nil})
            updated-client (update client :settings
                                   (fn [current]
                                     (->
-                                     current
-                                     (update "redirections"
-                                             (fn [_redirections]
-                                               (distinct
-                                                (into _redirections redirections))))
-                                     (update "logout-redirections"
-                                             (fn [_redirections]
-                                               (into _redirections logout))))))]
+                                      current
+                                      (update "redirections"
+                                              (fn [_redirections]
+                                                (distinct
+                                                  (into _redirections redirections))))
+                                      (update "logout-redirections"
+                                              (fn [_redirections]
+                                                (into _redirections logout))))))]
        (neyho.eywa.dataset/stack-entity
-        neyho.eywa.iam.uuids/app
-        updated-client)))))
+         neyho.eywa.iam.uuids/app
+         updated-client)))))
 
 (comment
   (add-eywa-client-redirects
-   {:redirections ["http://localhost:8000/eywa/callback"
-                   "http://localhost:8000/eywa/silent-callback"]
-    :logout ["http://localhost:8000/eywa"]}))
+    {:redirections ["http://localhost:8000/eywa/callback"
+                    "http://localhost:8000/eywa/silent-callback"]
+     :logout ["http://localhost:8000/eywa"]}))
 
 (defn set-superuser
-  ([] (set-superuser {:username  (env :eywa-user)
+  ([] (set-superuser {:username (env :eywa-user)
                       :password (env :eywa-password)}))
   ([user]
    (set-superuser (neyho.eywa.db.postgres/from-env) user))
@@ -98,10 +98,12 @@
      (println "Initializing user: " username)
      (warmup db)
      (neyho.eywa.iam/setup
-      {:users
-       [{:name username :password password :active true
-         :roles [neyho.eywa.data/*ROOT*]}]
-       :roles [neyho.eywa.data/*ROOT*]}))))
+       {:users
+        [{:name username
+          :password password
+          :active true
+          :roles [neyho.eywa.data/*ROOT*]}]
+        :roles [neyho.eywa.data/*ROOT*]}))))
 
 (defn delete-superuser
   ([] (delete-superuser (neyho.eywa.db.postgres/from-env)))
@@ -109,24 +111,24 @@
   ([db username]
    (warmup db)
    (let [{:keys [euuid]} (neyho.eywa.dataset/get-entity
-                          neyho.eywa.iam.uuids/user
-                          {:name username}
-                          {:euuid nil})]
+                           neyho.eywa.iam.uuids/user
+                           {:name username}
+                           {:euuid nil})]
      (when euuid
        (neyho.eywa.dataset/delete-entity
-        neyho.eywa.iam.uuids/user
-        {:euuid euuid})))))
+         neyho.eywa.iam.uuids/user
+         {:euuid euuid})))))
 
 (defn list-superusers
   ([] (list-superusers (neyho.eywa.db.postgres/from-env)))
   ([db]
    (warmup db)
    (let [{users :users} (neyho.eywa.dataset/get-entity
-                         neyho.eywa.iam.uuids/user-role
-                         {:euuid (:euuid neyho.eywa.data/*ROOT*)}
-                         {:euuid nil
-                          :users [{:selections
-                                   {:name nil}}]})]
+                          neyho.eywa.iam.uuids/user-role
+                          {:euuid (:euuid neyho.eywa.data/*ROOT*)}
+                          {:euuid nil
+                           :users [{:selections
+                                    {:name nil}}]})]
      (println (str/join "\n" (map :name users))))))
 
 (defn initialize
@@ -149,15 +151,15 @@
               #_(str "|" text)
               #_(str "|" text (apply str (repeat (- table-length 2 (count text)) " ")) "|"))]
       (str/join
-       "\n"
-       (map
-        #(str padding-left %)
-        (concat
-         [(row "")]
-         #_[hline
-            (row "")]
-         (map row lines)
-         [(row "")]))))))
+        "\n"
+        (map
+          #(str padding-left %)
+          (concat
+            [(row "")]
+            #_[hline
+               (row "")]
+            (map row lines)
+            [(row "")]))))))
 
 (defn java-info
   []
@@ -170,7 +172,7 @@
             [_ _ version build-time] (re-find #"(java\s+version\s+\")([\d\.]+)\"\s*([\d\-]+)" output)
             [_ build :as all] (re-find #"build(.*?)\)" output)]
         {:version version
-         :build  build
+         :build build
          :build-time build-time}))))
 
 (defn valid-java?
@@ -184,7 +186,8 @@
 
 (defmethod health/doctor "JAVA"
   [_]
-  (let [{java-version :version :as jinfo} (java-info)]
+  (let [{java-version :version
+         :as jinfo} (java-info)]
     (as-> [] lines
       (if (valid-java? jinfo)
         (conj lines (str "✅ JAVA" (str ": version '" java-version "' is supported")))
@@ -232,12 +235,12 @@
 
 (defn doctor []
   (let [lines (reduce
-               (fn [lines organ]
-                 (if-some [new-lines (health/doctor organ)]
-                   (into lines new-lines)
-                   lines))
-               []
-               (keys (methods health/doctor)))]
+                (fn [lines organ]
+                  (if-some [new-lines (health/doctor organ)]
+                    (into lines new-lines)
+                    lines))
+                []
+                (keys (methods health/doctor)))]
     (println (doctor-table lines))))
 
 (defn spit-pid
@@ -248,20 +251,20 @@
     (spit (str target) (str pid))))
 
 (patch/upgrade
- :eywa/core
- "0.4.0"
- (try
-   (update/last-version "core")
-   (catch Throwable _
-     (when (update/table-exists?)
-       (update/delete-table)
-       (update/create-table)))))
+  :eywa/core
+  "0.4.0"
+  (try
+    (update/last-version "core")
+    (catch Throwable _
+      (when (update/table-exists?)
+        (update/delete-table)
+        (update/create-table)))))
 
 (patch/upgrade
- :eywa/core
- "0.5.0"
- (neyho.eywa.dataset.postgres/fix-int-types)
- (neyho.eywa.dataset.postgres/fix-mandatory-constraints))
+  :eywa/core
+  "0.5.0"
+  (neyho.eywa.dataset.postgres/fix-int-types)
+  (neyho.eywa.dataset.postgres/fix-mandatory-constraints))
 
 (defn stop
   []
@@ -298,10 +301,10 @@
    (add-eywa-client-redirects)
    (neyho.eywa.server/start options)
    (patch/apply
-    :eywa/core
-    (try
-      (update/last-version "core")
-      (catch Throwable _ nil)))
+     :eywa/core
+     (try
+       (update/last-version "core")
+       (catch Throwable _ nil)))
    (neyho.eywa.update/sync "core" (patch/version :eywa/core))))
 
 (defn tear-down
@@ -315,11 +318,11 @@
   (let [[command subcommand] args]
     (when (= command "version")
       (let [eywa-versions (filter
-                           (fn [[k]]
-                             (when (keyword? k)
-                               (namespace k)
-                               (= "eywa" (namespace k))))
-                           (patch/available-versions))
+                            (fn [[k]]
+                              (when (keyword? k)
+                                (namespace k)
+                                (= "eywa" (namespace k))))
+                            (patch/available-versions))
             sorted (sort-by key eywa-versions)
             to-print (map (fn [[k v]] (str (namespace k) \. (name k) "=" v)) sorted)]
         (println (str/join "\n" to-print)))
@@ -344,10 +347,10 @@
                       (log/errorf ex "Couldn't finish EYWA setup.")
                       (.println System/err
                                 (str/join
-                                 "\n"
-                                 ["Couldn't finish EYWA initialization"
-                                  (ex-message ex)
-                                  (str "For more info check \"" env/log-dir "\" files")]))
+                                  "\n"
+                                  ["Couldn't finish EYWA initialization"
+                                   (ex-message ex)
+                                   (str "For more info check \"" env/log-dir "\" files")]))
                       (System/exit 1)))
                   "delete"
                   (do

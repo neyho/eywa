@@ -1,27 +1,27 @@
 (ns neyho.eywa.iam.oauth
   (:require
-   [clojure.string :as str]
-   clojure.java.io
-   clojure.pprint
-   [clojure.tools.logging :as log]
-   [vura.core :as vura]
-   [buddy.core.hash :as hash]
-   [ring.util.codec :as codec]
-   [io.pedestal.interceptor.chain :as chain]
-   [io.pedestal.http.body-params :as bp]
-   [neyho.eywa.iam.oauth.core :as core]
-   [neyho.eywa.iam.oauth.token :as token
-    :refer [token-interceptor
-            revoke-token-interceptor]]
-   [neyho.eywa.iam.oauth.authorization-code
-    :as authorization-code
-    :refer [*authorization-codes*
-            gen-authorization-code
-            get-code-session
-            validate-client
-            mark-code-issued]]
-   [neyho.eywa.iam.oauth.device-code :as device-code]
-   [neyho.eywa.iam.oauth.page.status :refer [status-page]]))
+    [buddy.core.hash :as hash]
+    clojure.java.io
+    clojure.pprint
+    [clojure.string :as str]
+    [clojure.tools.logging :as log]
+    [io.pedestal.http.body-params :as bp]
+    [io.pedestal.interceptor.chain :as chain]
+    [neyho.eywa.iam.oauth.authorization-code
+     :as authorization-code
+     :refer [*authorization-codes*
+             gen-authorization-code
+             get-code-session
+             validate-client
+             mark-code-issued]]
+    [neyho.eywa.iam.oauth.core :as core]
+    [neyho.eywa.iam.oauth.device-code :as device-code]
+    [neyho.eywa.iam.oauth.page.status :refer [status-page]]
+    [neyho.eywa.iam.oauth.token :as token
+     :refer [token-interceptor
+             revoke-token-interceptor]]
+    [ring.util.codec :as codec]
+    [vura.core :as vura]))
 
 (defn generate-code-challenge
   ([code-verifier] (generate-code-challenge code-verifier "S256"))
@@ -41,7 +41,8 @@
   {:enter
    (fn [ctx]
      (let [{{{:keys [code code_verifier grant_type]} :params} :request} ctx
-           {{:keys [code_challenge code_challenge_method] :as request}
+           {{:keys [code_challenge code_challenge_method]
+             :as request}
             :request} (-> code
                           get-code-session
                           core/get-session)
@@ -52,16 +53,17 @@
            (let [current-challenge (generate-code-challenge code_verifier code_challenge_method)]
              (if (= current-challenge code_challenge) ctx
                  (chain/terminate
-                  (core/json-error
-                   "invalid_request"
-                   "Proof Key for Code Exchange failed")))))))})
+                   (core/json-error
+                     "invalid_request"
+                     "Proof Key for Code Exchange failed")))))))})
 
 (def authorization-request
   {:name ::authorize-request
    :enter
    (fn [{{request :params
           :keys [remote-addr]
-          {:keys [user-agent]} :headers} :request :as ctx}]
+          {:keys [user-agent]} :headers} :request
+         :as ctx}]
      ; (def ctx ctx)
      ; (def request request)
      ; (def remote-addr remote-addr)
@@ -73,7 +75,7 @@
                  request))
              (error [data]
                (chain/terminate
-                (assoc ctx :response (core/handle-request-error data))))]
+                 (assoc ctx :response (core/handle-request-error data))))]
        (let [{:keys [response_type redirect_uri]
               :as request}
              (-> request
@@ -89,7 +91,8 @@
                    :request request})
            ;;
            (contains? response_type "code")
-           (let [{cookie-session :idsrv/session :as request
+           (let [{cookie-session :idsrv/session
+                  :as request
                   :keys [prompt redirect_uri state]} request
                  ;;
                  silent? (and (some? cookie-session) (= prompt "none"))]
@@ -103,9 +106,9 @@
                  ;; Check that there isn't some other code active
                  (and silent? (contains? (core/get-session cookie-session) :code))
                  (error
-                  {:request request
-                   :type "invalid_request"
-                   :description "Your session has unused access code active"})
+                   {:request request
+                    :type "invalid_request"
+                    :description "Your session has unused access code active"})
                  ;; When silent and above checks passed, than return directly to
                  ;; requested redirect_uri, with prepared authorization code
                  silent?
@@ -123,9 +126,9 @@
                        :response {:status 302
                                   :headers {"Location" (str redirect_uri "?"
                                                             (codec/form-encode
-                                                             (cond->
-                                                              {:code code}
-                                                               (not-empty state) (assoc :state state))))}}))
+                                                              (cond->
+                                                                {:code code}
+                                                                (not-empty state) (assoc :state state))))}}))
                    (catch clojure.lang.ExceptionInfo ex
                      (core/handle-request-error (ex-data ex))))
                  ;;
@@ -135,9 +138,9 @@
                          {client-euuid :euuid} (validate-client request)
                          location (str "/oauth/login?"
                                        (codec/form-encode
-                                        {:state (core/encrypt
-                                                 {:authorization-code code
-                                                  :flow "authorization_code"})}))]
+                                         {:state (core/encrypt
+                                                   {:authorization-code code
+                                                    :flow "authorization_code"})}))]
                      (save code {:client client-euuid
                                  :created-on (System/currentTimeMillis)
                                  :user/agent user-agent
@@ -154,7 +157,8 @@
            (error {:type "server_error"
                    :request request})))))})
 
-(defonce maintenance-agent (agent {:running true :period (vura/seconds 30)}))
+(defonce maintenance-agent (agent {:running true
+                                   :period (vura/seconds 30)}))
 
 (comment
   (agent-error maintenance-agent)
@@ -163,7 +167,8 @@
   (stop))
 
 (defn maintenance
-  [{:keys [running period] :as data}]
+  [{:keys [running period]
+    :as data}]
   (when (and running period)
     (log/debug "[OAuth] Maintenance start")
     (send-off *agent* maintenance)
@@ -190,8 +195,10 @@
 (def state-interceptor
   {:name ::state
    :enter
-   (fn [{{params :params :as request}
-         :request :as ctx}]
+   (fn [{{params :params
+          :as request}
+         :request
+         :as ctx}]
      (let [{:keys [form-params]} (bp/form-parser request)
            data (merge params form-params)
            ;;

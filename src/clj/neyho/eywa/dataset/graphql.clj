@@ -1,43 +1,43 @@
 (ns neyho.eywa.dataset.graphql
   (:require
-   [clojure.string :as str]
-   [clojure.core.async :as async]
-   [clojure.tools.logging :as log]
-   [neyho.eywa.dataset
-    :refer [publisher
-            deployed-model]]
-   [neyho.eywa.dataset.sql.naming :refer [normalize-name]]
-   [neyho.eywa.db :refer [*db*]]
-   [neyho.eywa.dataset.core :as dataset]
-   [neyho.eywa.iam.access :as access]))
+    [clojure.core.async :as async]
+    [clojure.string :as str]
+    [clojure.tools.logging :as log]
+    [neyho.eywa.dataset
+     :refer [publisher
+             deployed-model]]
+    [neyho.eywa.dataset.core :as dataset]
+    [neyho.eywa.dataset.sql.naming :refer [normalize-name]]
+    [neyho.eywa.db :refer [*db*]]
+    [neyho.eywa.iam.access :as access]))
 
 (defn- protect-dataset
   [model]
   (as-> model m
     (reduce
-     (fn [m entity]
-       (if (access/entity-allows? (:euuid entity) #{:read :write})
-         m
-         (dataset/remove-entity m entity)))
-     m
-     (dataset/get-entities m))
+      (fn [m entity]
+        (if (access/entity-allows? (:euuid entity) #{:read :write})
+          m
+          (dataset/remove-entity m entity)))
+      m
+      (dataset/get-entities m))
     (reduce
-     (fn [m {{from :euuid} :from
-             {to :euuid} :to
-             :as relation}]
-       (if (or
-            (access/relation-allows?
-             (:euuid relation)
-             [from to]
-             #{:read :write})
-            (access/relation-allows?
-             (:euuid relation)
-             [to from]
-             #{:read :write}))
-         m
-         (dataset/remove-relation m relation)))
-     m
-     (dataset/get-relations m))))
+      (fn [m {{from :euuid} :from
+              {to :euuid} :to
+              :as relation}]
+        (if (or
+              (access/relation-allows?
+                (:euuid relation)
+                [from to]
+                #{:read :write})
+              (access/relation-allows?
+                (:euuid relation)
+                [to from]
+                #{:read :write}))
+          m
+          (dataset/remove-relation m relation)))
+      m
+      (dataset/get-relations m))))
 
 (defn get-deployed-model [_ _ _]
   (protect-dataset (deployed-model)))
@@ -55,10 +55,35 @@
     (let [model (dataset/get-model *db*)
           protected-model (protect-dataset model)]
       (upstream
-       {:name "Global"
-        :model protected-model}))
+        {:name "Global"
+         :model protected-model}))
     (fn []
       (async/unsub publisher :refreshedGlobalDataset sub)
+      (async/close! sub))))
+
+
+
+
+(defn on-delta
+  [{:keys [username]} {:keys [elements]} upstream]
+  (let [sub (async/chan)]
+    (doseq [element elements]
+      (log/debugf "[DELTA SUBSCRIPTION::%s] Subscribing to dataset delta channel for: %s" username element)
+      (async/sub dataset/*delta-publisher* element sub))
+    ;; Start idle service that will listen on delta changes
+    (async/go-loop
+      [{:keys [element]
+        :as data} (async/<! sub)]
+      (log/debugf "[DELTA SUBSCRIPTION::%s] Received something at delta channel" username)
+      (when data
+        (when (or (access/entity-allows? element #{:read :write})
+                  (access/relation-allows? element #{:read :write}))
+          (upstream data))
+        (recur (async/<! sub))))
+    (fn []
+      (doseq [element elements]
+        (log/debugf "[DELTA SUBSCRIPTION::%s] Removing subscription to dataset delta channel for: %s" username element)
+        (async/unsub dataset/*delta-publisher* element sub))
       (async/close! sub))))
 
 (def dataset-txt-prelude
@@ -178,48 +203,50 @@ mutation {
   ([model]
    (let [entities (dataset/get-entities model)
          txt-entities (reduce
-                       (fn [result {:keys [attributes] entity-name :name :as entity}]
-                         (let [relations (dataset/focus-entity-relations model entity)]
-                           (conj result
-                                 (str "Entity: " entity-name \newline
-                                      "Attributes:" \newline
-                                      (str/join "\n" (map (fn [{:keys [constraint name type configuration]}]
-                                                            (str
-                                                             (case constraint
-                                                               "optional" "o"
-                                                               "mandatory" "*"
-                                                               "unique" "#"
-                                                               "o")
-                                                             "\t"
-                                                             name
-                                                             \[
-                                                             type
-                                                             \]
-                                                             (when (= type "enum")
-                                                               (str
-                                                                \{
-                                                                (str/join ","
-                                                                          (keep
-                                                                           (fn [{:keys [active name]}]
-                                                                             (when active name))
-                                                                           (:values configuration)))
-                                                                \}))))
-                                                          attributes))
-                                      (when (not-empty relations)
-                                        (str
-                                         "\nRelations:\n"
-                                         (str/join
-                                          "\n"
-                                          (keep
-                                           (fn [{:keys [from to-label to cardinality]}]
-                                             (when to-label
-                                               (str
-                                                (:name from)
-                                                "---" (normalize-name to-label) \[ cardinality \] "--->"
-                                                (:name to))))
-                                           relations))))))))
-                       []
-                       entities)]
+                        (fn [result {:keys [attributes]
+                                     entity-name :name
+                                     :as entity}]
+                          (let [relations (dataset/focus-entity-relations model entity)]
+                            (conj result
+                                  (str "Entity: " entity-name \newline
+                                       "Attributes:" \newline
+                                       (str/join "\n" (map (fn [{:keys [constraint name type configuration]}]
+                                                             (str
+                                                               (case constraint
+                                                                 "optional" "o"
+                                                                 "mandatory" "*"
+                                                                 "unique" "#"
+                                                                 "o")
+                                                               "\t"
+                                                               name
+                                                               \[
+                                                               type
+                                                               \]
+                                                               (when (= type "enum")
+                                                                 (str
+                                                                   \{
+                                                                   (str/join ","
+                                                                             (keep
+                                                                               (fn [{:keys [active name]}]
+                                                                                 (when active name))
+                                                                               (:values configuration)))
+                                                                   \}))))
+                                                           attributes))
+                                       (when (not-empty relations)
+                                         (str
+                                           "\nRelations:\n"
+                                           (str/join
+                                             "\n"
+                                             (keep
+                                               (fn [{:keys [from to-label to cardinality]}]
+                                                 (when to-label
+                                                   (str
+                                                     (:name from)
+                                                     "---" (normalize-name to-label) \[ cardinality \] "--->"
+                                                     (:name to))))
+                                               relations))))))))
+                        []
+                        entities)]
      (str dataset-txt-prelude "\n\n" (str/join "\n----\n" txt-entities)))))
 
 (defn get-deployed-model-document [_ _ _]
@@ -229,6 +256,5 @@ mutation {
   (def model (deployed-model))
   (def entity (dataset/get-entity model #uuid "63b2e70a-2162-423a-be36-4909d7831605"))
   (def relations (dataset/focus-entity-relations model entity))
-  (println (get-dataset-txt))
   (spit "cli/dataset_schema.md" (get-dataset-txt))
   (spit "/tmp/eywa_ai_robotics/dataset_schema.md" (get-dataset-txt)))

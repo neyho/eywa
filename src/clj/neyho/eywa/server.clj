@@ -1,37 +1,39 @@
 (ns neyho.eywa.server
   (:require
-   [environ.core :refer [env]]
-   [clojure.java.io :as io]
-   clojure.pprint
-   clojure.string
-   clojure.set
-   [clojure.tools.logging :as log]
-   [io.pedestal.http :as http]
-   [io.pedestal.http.cors :as cors]
-   [io.pedestal.http.route :as route]
-   [io.pedestal.http.content-negotiation :as conneg]
-   [io.pedestal.http.ring-middlewares :as middlewares]
-   [com.walmartlabs.lacinia.pedestal2 :as lp]
-   neyho.eywa.lacinia
-   [neyho.eywa.iam.oidc :as oidc]
-   [neyho.eywa.iam.access.context :refer [*user* *roles* *groups*]]
-   [neyho.eywa.server.ws.graphql :as ws.graphql]
-   [neyho.eywa.server.interceptors :refer [make-info-interceptor json-response-interceptor make-spa-interceptor]]
-   [neyho.eywa.server.interceptors.util :refer [coerce-body]]
-   [neyho.eywa.server.interceptors.authentication :as authentication
-    :refer [user-data
-            authenticate]]))
+    [clojure.java.io :as io]
+    clojure.pprint
+    clojure.set
+    clojure.string
+    [clojure.tools.logging :as log]
+    [com.walmartlabs.lacinia.pedestal2 :as lp]
+    [environ.core :refer [env]]
+    [io.pedestal.http :as http]
+    [io.pedestal.http.content-negotiation :as conneg]
+    [io.pedestal.http.cors :as cors]
+    [io.pedestal.http.ring-middlewares :as middlewares]
+    [io.pedestal.http.route :as route]
+    [neyho.eywa.iam.access.context :refer [*user* *roles* *groups*]]
+    [neyho.eywa.iam.oidc :as oidc]
+    neyho.eywa.lacinia
+    [neyho.eywa.server.interceptors :refer [make-info-interceptor json-response-interceptor make-spa-interceptor]]
+    [neyho.eywa.server.interceptors.authentication :as authentication
+     :refer [user-data
+             authenticate]]
+    [neyho.eywa.server.interceptors.util :refer [coerce-body]]
+    [neyho.eywa.server.ws.graphql :as ws.graphql]))
 
 (def echo-integration
   {:name :eywa/transit-integration-echo
    :enter
-   (fn [{:keys [request] :as context}]
+   (fn [{:keys [request]
+         :as context}]
      (let [params (reduce
-                   merge
-                   {}
-                   (vals
-                    (select-keys request [:json-params :transit-params])))]
-       (assoc context :response {:status 200 :body params})))})
+                    merge
+                    {}
+                    (vals
+                      (select-keys request [:json-params :transit-params])))]
+       (assoc context :response {:status 200
+                                 :body params})))})
 
 (def supported-types ["text/html" "application/transit+json" "application/edn" "application/json" "text/plain"])
 (def content-neg-intc (conneg/negotiate-content supported-types))
@@ -65,7 +67,7 @@
                       lp/enable-tracing-interceptor
                       wrapped-query-executor]]
     (into
-     #{["/graphql" :post interceptors :route-name ::graphql-api]})))
+      #{["/graphql" :post interceptors :route-name ::graphql-api]})))
 
 (defonce server (atom nil))
 
@@ -94,32 +96,32 @@
    (stop)
    (comment (def info nil))
    (let [routes (route/expand-routes
-                 (clojure.set/union
-                   (default-routes info)
-                   graphql-routes
-                   oidc/routes
-                   routes))
+                  (clojure.set/union
+                    (default-routes info)
+                    graphql-routes
+                    oidc/routes
+                    routes))
          router (route/router routes :map-tree)
          _server (->
-                  {::http/type :jetty
-                   ::http/join? false
-                   ::http/host host
-                   ::http/port port
-                   ::http/interceptors
-                   [;; Constantly true... If there is need for CORS protection than apply
+                   {::http/type :jetty
+                    ::http/join? false
+                    ::http/host host
+                    ::http/port port
+                    ::http/interceptors
+                    [;; Constantly true... If there is need for CORS protection than apply
                     ;; CORS protection at that routes, otherwise this is necessary because
                     ;; Access-Control-Allow-Headers have to be returned, otherwise browser
                     ;; will report error
-                    (cors/allow-origin {:allowed-origins (constantly true)})
-                    (middlewares/content-type {:mime-types {}})
-                    route/query-params
-                    (route/method-param)
-                    router
-                    (make-spa-interceptor (env :eywa-serve))]}
-                  ws.graphql/enable
-                  service-initializer
+                     (cors/allow-origin {:allowed-origins (constantly true)})
+                     (middlewares/content-type {:mime-types {}})
+                     route/query-params
+                     (route/method-param)
+                     router
+                     (make-spa-interceptor (env :eywa-serve))]}
+                   ws.graphql/enable
+                   service-initializer
                    ; development-environment
-                  http/create-server)]
+                   http/create-server)]
      (reset! server (http/start _server))
      (log/infof "%s server started @ %s:%s" (env :eywa-bucket "EYWA") host port))))
 

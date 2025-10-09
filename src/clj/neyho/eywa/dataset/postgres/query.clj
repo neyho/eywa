@@ -834,25 +834,54 @@
     entities :entity
     entity-mapping :entity/mapping
     :as analysis}]
-  ;; (def analysis analysis)
-  (doseq [[{:keys [relation]} delta] many-relations]
-    (log/debugf "[Datasets] Publishing relation delta: %s" relation)
-    (async/put!
-     core/*delta-client*
-     {:element relation
-      :delta delta}))
-  (doseq [[{:keys [relation]} delta] one-relations]
-    (log/debugf "[Datasets] Publishing relation delta: %s" relation)
-    (async/put!
-     core/*delta-client*
-     {:element relation
-      :delta delta}))
-  (doseq [[table delta] entities]
-    (log/debugf "[Datasets] Publishing entity delta: %s" (get entity-mapping table))
-    (async/put!
-     core/*delta-client*
-     {:element (get entity-mapping table)
-      :delta delta}))
+  (async/go
+    (comment
+      (def analysis analysis)
+      (publish-delta analysis))
+    (let [find-record (memoize
+                          (fn [table eid]
+                            (some
+                              (fn [{:keys [_eid] :as data}]
+                                (when (= _eid eid)
+                                  data))
+                              (vals (get entities table)))))]
+    (when (not-empty many-relations)
+      (doseq [[{:keys [relation from to]
+                from-table :from/table
+                to-table :to/table} delta] many-relations]
+          (log/debugf "[Datasets] Publishing relation delta: %s" relation)
+          (async/put!
+            core/*delta-client*
+            {:element relation
+             :delta {:type :link
+                     :from from :to to
+                     :data (map
+                             (fn [[fid tid]]
+                               [(find-record from-table fid)
+                                (find-record to-table tid)])
+                             delta)}})))
+    (when (not-empty one-relations)
+      (doseq [[{:keys [relation from to]
+                from-table :from/table
+                to-table :to/table} delta] one-relations]
+      (log/debugf "[Datasets] Publishing relation delta: %s" relation)
+      (async/put!
+        core/*delta-client*
+        {:element relation
+         :delta {:from from :to to
+                 :type :link
+                 :data (map
+                         (fn [[fid tid]]
+                           [(find-record from-table fid)
+                            (find-record to-table tid)])
+                         delta)}}))))
+    (doseq [[table delta] entities]
+      (log/debugf "[Datasets] Publishing entity delta: %s" (get entity-mapping table))
+      (async/put!
+        core/*delta-client*
+        {:element (get entity-mapping table)
+         :delta {:type :change
+                 :data (vals delta)}})))
   analysis)
 
 (defn set-entity
@@ -2421,7 +2450,9 @@
                    (doseq [query delete-statements]
                      (log/debugf "[%s]Purgin entity rows with %s" entity-id query)
                      (postgres/execute! connection query *return-type*))
-                   (async/put! core/*delta-client* {:element entity-id :delta {:purge response}})
+                   (async/put! core/*delta-client* {:element entity-id
+                                                    :delta {:type :purge
+                                                            :data response}})
                    response))
                []))))))))
 
@@ -2704,7 +2735,9 @@
                    "[%s] Deleting entity\n%s"
                    entity-id sql)]
             (postgres/execute! connection sql *return-type*)
-            (async/put! core/*delta-client* {:element entity-id :delta {:delete args}})
+            (async/put! core/*delta-client* {:element entity-id
+                                             :delta {:type :delete
+                                                     :data args}})
              ; (async/put!
              ;   core/client
              ;   {:type :entity/delete
@@ -2800,7 +2833,8 @@
            (doseq [[label {:keys [relation] :as slice}] relations]
              (async/put! core/*delta-client*
                          {:element relation
-                          :delta {:slice {label slice}}}))
+                          :delta {:type :slice
+                                  :data {label slice}}}))
            result))))))
 
 (extend-type neyho.eywa.Postgres

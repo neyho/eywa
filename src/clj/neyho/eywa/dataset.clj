@@ -1,22 +1,24 @@
 (ns neyho.eywa.dataset
   (:require
-   clojure.string
-   clojure.pprint
-   clojure.set
-   [clojure.java.io :as io]
-   [clojure.tools.logging :as log]
-   [clojure.core.async :as async]
-   neyho.eywa
+    [cheshire.generate :as cgen]
+    [clojure.core.async :as async]
+    [clojure.java.io :as io]
+    clojure.pprint
+    clojure.set
+    clojure.string
+    [clojure.tools.logging :as log]
+    [com.walmartlabs.lacinia.executor :as executor]
+    [com.walmartlabs.lacinia.resolve :as resolve]
+    [com.walmartlabs.lacinia.selection :as selection]
+    neyho.eywa
    ; [neyho.eywa.transit :refer [<-transit]]
-   [neyho.eywa.data]
-   [neyho.eywa.iam.uuids :as au]
-   [neyho.eywa.dataset.core :as dataset]
-   [neyho.eywa.db :as db :refer [*db*]]
-   [neyho.eywa.dataset.uuids :as du]
-   [neyho.eywa.lacinia :as lacinia]
-   [com.walmartlabs.lacinia.resolve :as resolve]
-   [com.walmartlabs.lacinia.selection :as selection]
-   [com.walmartlabs.lacinia.executor :as executor]))
+    [neyho.eywa.data]
+    [neyho.eywa.dataset.core :as dataset]
+    [neyho.eywa.dataset.uuids :as du]
+    [neyho.eywa.db :as db :refer [*db*]]
+    [neyho.eywa.iam.uuids :as au]
+    [neyho.eywa.lacinia :as lacinia])
+  (:import [org.postgresql.util PGobject]))
 
 (defonce ^:dynamic *model* (ref nil))
 
@@ -33,9 +35,9 @@
 
 (defn list-entity-ids []
   (sort
-   (map
-    (juxt :euuid :name)
-    (dataset/get-entities (deployed-model)))))
+    (map
+      (juxt :euuid :name)
+      (dataset/get-entities (deployed-model)))))
 
 (defonce subscription (async/chan 100))
 
@@ -68,26 +70,27 @@
   [hooks resolver]
   (if (not-empty hooks)
     (let [hooks (keep
-                 (fn [definition]
-                   (let [{resolver :fn :as hook} (selection/arguments definition)]
-                     (if-some [resolved (try
-                                          (resolve (symbol resolver))
-                                          (catch Throwable e
-                                            (log/errorf e "Couldn't resolve symbol %s" resolver)
-                                            nil))]
-                       (assoc hook :fn resolved)
-                       (assoc hook :fn (fn [ctx args v]
-                                         (log/error "Couldn't resolve '%s'" resolver)
-                                         [ctx args v])))))
-                 hooks)
+                  (fn [definition]
+                    (let [{resolver :fn
+                           :as hook} (selection/arguments definition)]
+                      (if-some [resolved (try
+                                           (resolve (symbol resolver))
+                                           (catch Throwable e
+                                             (log/errorf e "Couldn't resolve symbol %s" resolver)
+                                             nil))]
+                        (assoc hook :fn resolved)
+                        (assoc hook :fn (fn [ctx args v]
+                                          (log/error "Couldn't resolve '%s'" resolver)
+                                          [ctx args v])))))
+                  hooks)
           ;;
           {:keys [pre post]}
           (group-by
-           #(cond
-              (neg? (:metric % 1)) :pre
-              (pos? (:metric % 1)) :post
-              :else :resolver)
-           hooks)
+            #(cond
+               (neg? (:metric % 1)) :pre
+               (pos? (:metric % 1)) :post
+               :else :resolver)
+            hooks)
           ;;
           steps
           (cond-> (or (some-> (not-empty (map :fn pre)) vec) [])
@@ -104,10 +107,10 @@
         ; (log/infof "RESOLVING: %s" resolver)
         (let [[_ _ v]
               (reduce
-               (fn [[ctx args value] f]
-                 (f ctx args value))
-               [ctx args value]
-               steps)]
+                (fn [[ctx args value] f]
+                  (f ctx args value))
+                [ctx args value]
+                steps)]
           ; (log/infof "RETURNING FINAL RESULT: %s" v)
           v)))
     resolver))
@@ -131,9 +134,13 @@
   [variable]
   (let [args (select-keys (var-get variable) [:euuid])
         data (get-entity
-              au/user args
-              {:_eid nil :euuid nil :name nil
-               :avatar nil :active nil :type nil})]
+               au/user args
+               {:_eid nil
+                :euuid nil
+                :name nil
+                :avatar nil
+                :active nil
+                :type nil})]
     (log/debugf "Initializing %s\n%s" variable data)
     (alter-var-root variable (constantly data))))
 
@@ -150,14 +157,14 @@
 (defn get-version
   [euuid]
   (get-entity
-   du/dataset-version
-   {:euuid euuid}
-   {:euuid nil
-    :dataset [{:selections
-               {:euuid nil
-                :name nil}}]
-    :model nil
-    :name nil}))
+    du/dataset-version
+    {:euuid euuid}
+    {:euuid nil
+     :dataset [{:selections
+                {:euuid nil
+                 :name nil}}]
+     :model nil
+     :name nil}))
 
 (defn get-version-model
   [euuid]
@@ -172,14 +179,14 @@
   (delete-entity du/dataset-entity {:euuid entity-uuid})
   (def version
     (get-entity
-     du/dataset-version
-     {:euuid #uuid "1b14b5c9-44ab-4280-8f8a-37c2d419068a"}
-     {:euuid nil
-      :dataset [{:selections
-                 {:euuid nil
-                  :name nil}}]
-      :model nil
-      :name nil}))
+      du/dataset-version
+      {:euuid #uuid "1b14b5c9-44ab-4280-8f8a-37c2d419068a"}
+      {:euuid nil
+       :dataset [{:selections
+                  {:euuid nil
+                   :name nil}}]
+       :model nil
+       :name nil}))
   (def version)
   (def username "rgersak")
   (def user nil))
@@ -194,21 +201,21 @@
     _]
    (let [selection (executor/selections-tree context)]
      (log/infof
-      "User %s deploying dataset %s@%s"
-      username (-> version :dataset :name) (:name version))
+       "User %s deploying dataset %s@%s"
+       username (-> version :dataset :name) (:name version))
      (try
        ; (let [{:keys [euuid]} (dataset/deploy! connector version)]
        ;; TODO - Rethink this. Should we use teard-down and setup instead
        ;; of plain deploy! recall!
        (let [{:keys [euuid]} (dataset/deploy! *db* version)]
          (async/put!
-          subscription
-          {:topic :refreshedGlobalDataset
-           :data {:name "Global"
-                  :model (dataset/get-model *db*)}})
+           subscription
+           {:topic :refreshedGlobalDataset
+            :data {:name "Global"
+                   :model (dataset/get-model *db*)}})
          (log/infof
-          "User %s deployed version %s@%s"
-          username (-> version :dataset :name) (:name version))
+           "User %s deployed version %s@%s"
+           username (-> version :dataset :name) (:name version))
          (when (not-empty selection)
            ; (log/tracef
            ;   "Returning data for selection:\n%s"
@@ -216,15 +223,15 @@
            (db/get-entity *db* du/dataset-version {:euuid euuid} selection)))
        (catch clojure.lang.ExceptionInfo e
          (log/errorf
-          e "Couldn't deploy dataset version %s@%s"
-          (-> version :dataset :name) (:name version))
+           e "Couldn't deploy dataset version %s@%s"
+           (-> version :dataset :name) (:name version))
          (resolve/with-error
            nil
            (assoc (ex-data e) :message (ex-message e))))
        (catch Throwable e
          (log/errorf
-          e "Couldn't deploy dataset version %s@%s"
-          (-> version :dataset :name) (:name version))
+           e "Couldn't deploy dataset version %s@%s"
+           (-> version :dataset :name) (:name version))
          ;; TODO - Decide if upon unsuccessfull deploy do we delete old table (commented)
          ; (let [{versions :versions} 
          ;       (graphql/get-entity
@@ -252,19 +259,20 @@
 
 ;; @hook
 (defn prepare-deletion-context
-  [ctx {:keys [euuid] :as args} v]
+  [ctx {:keys [euuid]
+        :as args} v]
   [(if (some? euuid)
      (if-let [dataset (db/get-entity
-                       *db*
-                       datasets
-                       {:euuid euuid}
-                       {:name nil
-                        :euuid nil
-                        :versions [{:args {:_order_by [{:modified_on :asc}]
-                                           :_where {:deployed {:_boolean :TRUE}}}
-                                    :selections {:name nil
-                                                 :euuid nil
-                                                 :model nil}}]})]
+                        *db*
+                        datasets
+                        {:euuid euuid}
+                        {:name nil
+                         :euuid nil
+                         :versions [{:args {:_order_by [{:modified_on :asc}]
+                                            :_where {:deployed {:_boolean :TRUE}}}
+                                     :selections {:name nil
+                                                  :euuid nil
+                                                  :model nil}}]})]
        (do
          (log/infof "Preparing deletion context for dataset: %s" (:name dataset))
          (cond-> ctx
@@ -295,9 +303,9 @@
   [db]
   (when-not (some #(instance? % db) [neyho.eywa.Postgres])
     (throw
-     (ex-info
-      "Database is not supported"
-      (if (map? db) db {:db db})))))
+      (ex-info
+        "Database is not supported"
+        (if (map? db) db {:db db})))))
 
 (defn setup
   "Function will setup initial dataset models that are required for EYWA
@@ -321,44 +329,50 @@
     (type global-model) (type model)
     (def projection (dataset/project model global-model))
     (filter
-     dataset/entity-changed?
-     (dataset/get-entities projection)))
+      dataset/entity-changed?
+      (dataset/get-entities projection)))
   (:version
-   (:model
-    (get-entity
-     du/dataset-version
-     {:euuid #uuid "55f666c1-f631-4a69-a84a-5746ed04ba4e"}
-     {:model nil}))))
+    (:model
+      (get-entity
+        du/dataset-version
+        {:euuid #uuid "55f666c1-f631-4a69-a84a-5746ed04ba4e"}
+        {:model nil}))))
 
 (defn latest-deployed-versions
   []
   (map
-   (fn [{[{version :name :keys [model]}] :versions
-         :keys [euuid name]}]
-     {:euuid euuid :name name :version version :model model})
-   (search-entity
-    du/dataset
-    nil
-    {:euuid nil
-     :name nil
-     :versions
-     [{:selections {:name nil
-                    :model nil}
-       :args {:_where {:deployed {:_boolean :TRUE}}
-              :_limit 1
-              :_order_by {:modified_on :desc}}}]})))
+    (fn [{[{version :name
+            :keys [model]}] :versions
+          :keys [euuid name]}]
+      {:euuid euuid
+       :name name
+       :version version
+       :model model})
+    (search-entity
+      du/dataset
+      nil
+      {:euuid nil
+       :name nil
+       :versions
+       [{:selections {:name nil
+                      :model nil}
+         :args {:_where {:deployed {:_boolean :TRUE}}
+                :_limit 1
+                :_order_by {:modified_on :desc}}}]})))
 
 (defn latest-deployed-version
   [dataset-euuid]
   (let [{[version] :versions}
         (get-entity
-         du/dataset
-         {:euuid dataset-euuid}
-         {:versions
-          [{:selections {:euuid nil :name nil :model nil}
-            :args {:_where {:deployed {:_boolean :TRUE}}
-                   :_limit 1
-                   :_order_by {:modified_on :desc}}}]})]
+          du/dataset
+          {:euuid dataset-euuid}
+          {:versions
+           [{:selections {:euuid nil
+                          :name nil
+                          :model nil}
+             :args {:_where {:deployed {:_boolean :TRUE}}
+                    :_limit 1
+                    :_order_by {:modified_on :desc}}}]})]
     version))
 
 (defn latest-deployed-model
@@ -369,9 +383,9 @@
   []
   (let [delta-client (async/chan 1000)
         delta-publisher (async/pub
-                         delta-client
-                         (fn [{:keys [element]}]
-                           element))]
+                          delta-client
+                          (fn [{:keys [element]}]
+                            element))]
     (alter-var-root #'neyho.eywa.dataset.core/*delta-client* (fn [_] delta-client))
     (alter-var-root #'neyho.eywa.dataset.core/*delta-publisher* (fn [_] delta-publisher))))
 
@@ -384,6 +398,11 @@
      (def db *db*))
    (try
      (init-delta-pipe)
+     (cgen/add-encoder
+       PGobject
+       (fn [^PGobject pgobj json-gen]
+         ;; .getValue returns the textual representation (for json/jsonb it's a JSON string)
+         (.writeString json-gen (.getValue pgobj))))
      (dataset/reload db {:model (dataset/get-last-deployed db 0)})
      (lacinia/add-directive :hook wrap-hooks)
      (lacinia/add-shard ::dataset-directives (slurp (io/resource "dataset_directives.graphql")))
@@ -398,4 +417,4 @@
 (defn stop
   []
   (dosync
-   (ref-set *model* nil)))
+    (ref-set *model* nil)))

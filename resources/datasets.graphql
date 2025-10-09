@@ -70,7 +70,19 @@ type Mutation {
 
 }
 
+type DatasetChange {
+  "Element is either Entity UUID or Relation UUID"
+  element:UUID
+  delta: JSON
+}
+
 type Subscription {
   refreshedGlobalDataset:DatasetVersion
   @resolve(fn: "neyho.eywa.dataset.graphql/on-deploy")
+
+  """Subscribe to entity or relationship delta. List entity or relationship
+  UUIDS and for those UUIDS you will receive changes when something is changed,
+  deleted, sliced or purged!"""
+  datasetDelta(elements:[UUID]):DatasetChange
+  @resolve(fn: "neyho.eywa.dataset.graphql/on-delta")
 }
