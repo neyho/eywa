@@ -21,6 +21,7 @@
     neyho.eywa.iam.access
     [neyho.eywa.iam.oauth :as oauth]
     neyho.eywa.iam.oauth.store
+    [neyho.eywa.iam.oidc.ldap :as ldap]
     neyho.eywa.iam.uuids
     neyho.eywa.lacinia
     neyho.eywa.server
@@ -298,6 +299,7 @@
    (neyho.eywa.dataset.encryption/start)
    (neyho.eywa.iam.oauth.store/start)
    (neyho.eywa.iam.access/start)
+   (ldap/start)
    (add-eywa-client-redirects)
    (neyho.eywa.server/start options)
    (patch/apply
