@@ -1339,9 +1339,9 @@
       (doseq [statement statements]
         (try
           (execute-one! con [statement])
-          (println statement)
+          (log/info statement)
           (catch Throwable ex
-            (println statement)))))))
+            (log/error ex statement)))))))
 
 (defn get-column-type
   "Get current column type from database"
@@ -1404,10 +1404,10 @@
         (doseq [statement statements]
           (try
             (execute-one! con [statement])
-            (println "✅" statement)
+            (log/info "✅" statement)
             (catch Throwable ex
-              (println "❌ EX:" ex)
-              (println "   " statement))))))))
+              (log/error "❌ EX:" ex)
+              (log/error "   " statement))))))))
 
 (defn get-column-constraints
   "Get column constraints from database including NOT NULL"
@@ -1461,14 +1461,12 @@
                            (concat statements attribute-statements)))
                        []
                        entities)]
-      statements
-
       ;; Execute the statements
       (with-open [con (jdbc/get-connection (:datasource *db*))]
         (doseq [statement statements]
           (try
             (execute-one! con [statement])
-            (println "✅" statement)
+            (log/info "✅" statement)
             (catch Throwable ex
-              (println "❌ EX:" ex)
-              (println "   " statement))))))))
+              (log/error "❌ EX:" ex)
+              (log/error "   " statement))))))))

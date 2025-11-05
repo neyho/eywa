@@ -30,7 +30,7 @@
     [patcho.patch :as patch])
   (:gen-class :main true))
 
-(patch/current-version :eywa/core "0.5.3")
+(patch/current-version :eywa/core "0.5.6")
 
 (defn setup
   ([] (setup (neyho.eywa.db.postgres/from-env)))
@@ -170,7 +170,7 @@
                                    (log/error ex "Invalid JAVA scan")))]
     (when (and exit (zero? exit))
       (let [output (some #(when (not-empty %) %) [out err])
-            [_ _ version build-time] (re-find #"(java\s+version\s+\")([\d\.]+)\"\s*([\d\-]+)" output)
+            [_ _ version build-time] (re-find #"(version\s+\")([\d\.]+)\"\s*([\d\-]+)" output)
             [_ build :as all] (re-find #"build(.*?)\)" output)]
         {:version version
          :build build
@@ -180,6 +180,9 @@
   [info]
   (if-some [version (:version info)]
     (condp #(.startsWith %2 %1) version
+      "25." true
+      "21." true
+      "19." true
       "17." true
       "11." true
       false)
@@ -194,7 +197,7 @@
         (conj lines (str "✅ JAVA" (str ": version '" java-version "' is supported")))
         (conj lines
               (str "❌ JAVA" (str ": current version '" java-version "' is not supported"))
-              (str "         Use JAVA versions 11+"))))))
+              (str "        Use JAVA versions 11,17,19,21,25"))))))
 
 (defn is-initialized
   []
@@ -292,13 +295,20 @@
      (def db (neyho.eywa.db.postgres/from-env)))
    (stop)
    (neyho.eywa.transit/init)
-   (oauth/start)
-   (neyho.eywa.db.postgres/start db)
-   (neyho.eywa.dataset/start)
-   (neyho.eywa.iam/start)
-   (neyho.eywa.dataset.encryption/start)
-   (neyho.eywa.iam.oauth.store/start)
-   (neyho.eywa.iam.access/start)
+   (println "Starting OAuth2.1...")
+   (time (oauth/start))
+   (println "Starting Postgres...")
+   (time (neyho.eywa.db.postgres/start db))
+   (println "Starting Datasets...")
+   (time (neyho.eywa.dataset/start))
+   (println "Starting IAM...")
+   (time (neyho.eywa.iam/start))
+   (println "Starting encryption...")
+   (time (neyho.eywa.dataset.encryption/start))
+   (println "Starting OAuth storage...")
+   (time (neyho.eywa.iam.oauth.store/start))
+   (println "Starting access enforcement...")
+   (time (neyho.eywa.iam.access/start))
    (ldap/start)
    (add-eywa-client-redirects)
    (neyho.eywa.server/start options)

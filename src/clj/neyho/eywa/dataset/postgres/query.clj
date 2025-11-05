@@ -984,6 +984,56 @@
     "timeperiod" "currency" "json" "uuid"
     "encrypted" "hashed" "transit" "avatar"})
 
+
+(defn entity-serde
+  [entity-uuid]
+  (comment
+    (def entity-uuid #uuid "edcab1db-ee6f-4744-bfea-447828893223"))
+  (let [{:keys [fields] :as entity} (get (deployed-schema) entity-uuid)
+        field->type (reduce
+                      (fn [result {f :key t :type t' :postgres/type}]
+                        (assoc result f (or t' t)))
+                      nil
+                      (vals fields))
+
+        encoders (reduce
+                   (fn [result field]
+                     (let [t (get field->type field)]
+                       (case t
+                         ("boolean" "string" "int" "float" "json"
+                                    "timestamp" "timeperiod" "currency"
+                                    "uuid" "avatar" "hashed" nil) result
+                         "transit" (update result field freeze)
+                         (assoc result field
+                                (fn [v]
+                                  (doto (PGobject.)
+                                    (.setType t)
+                                    (.setValue (name v))))))))
+                   nil
+                   (keys field->type))
+        decoders (reduce
+                   (fn [r k]
+                     (letfn [(shallow-keywords [data]
+                               (reduce
+                                 (fn [r [k v]]
+                                   (assoc r (keyword k) v))
+                                 nil
+                                 data))]
+                       (if-let [transform (case (field->type k) 
+                                            "transit" <-transit
+                                            "encrypted" (fn [data]
+                                                          (try
+                                                            (decrypt-data (walk/keywordize-keys data))
+                                                            (catch Throwable _ nil)))
+                                            ("currency" "period") shallow-keywords
+                                            nil)]
+                         (assoc r k transform)
+                         r)))
+                   nil
+                   (keys field->type))]
+    (hash-map :encoders encoders
+              :decoders decoders)))
+
 (defn selection->schema
   ([entity-id selection]
    (selection->schema entity-id selection nil))
@@ -1090,7 +1140,7 @@
                                   (reduce clojure.set/union
                                           (if (valid-fields k) (conj result k) result)
                                           (concat
-                                           (map join-args (vals (select-keys args [:_where :_maybe])))
+                                           (map join-args (vals (select-keys args [:_where :_maybe :_count :_agg])))
                                            (mapcat #(map join-args %) (vals (select-keys args [:_or :_and]))))))
                                 result
                                 args)))]
@@ -1242,6 +1292,7 @@
                                                        (dissoc :_count)
                                                        (dissoc :relations)
                                                        (clojure.set/rename-keys {:table :relation/table})
+                                                       (merge (entity-serde (:to rdata)))
                                                        (assoc
                                                          :pinned true
                                                          :entity/table (:to/table rdata)
@@ -1274,6 +1325,7 @@
                                                        (dissoc :_agg)
                                                        (dissoc :relations)
                                                        (clojure.set/rename-keys {:table :relation/table})
+                                                       (merge (entity-serde (:to rdata)))
                                                        (assoc 
                                                          :pinned true
                                                          :entity/table (:to/table rdata)
@@ -1853,6 +1905,30 @@
                   (recur
                    (conj queries (future (process-node result current-location)))
                    (zip/right current-location)))))
+            #_(add-encoders [schema]
+              (let [to-euuid (:to schema)
+                    {:keys [fields] :as entity} (get (deployed-schema) to-euuid)
+                    field->type (reduce
+                                  (fn [result {f :key t :type t' :postgres/type}]
+                                    (assoc result f (or t' t)))
+                                  nil
+                                  (vals fields))
+                    encoders (reduce
+                               (fn [result field]
+                                 (let [t (get field->type field)]
+                                   (case t
+                                     ("boolean" "string" "int" "float" "json"
+                                                "timestamp" "timeperiod" "currency"
+                                                "uuid" "avatar" "hashed" nil) result
+                                     "transit" (update result field freeze)
+                                     (assoc result field
+                                            (fn [v]
+                                              (doto (PGobject.)
+                                                (.setType t)
+                                                (.setValue (name v))))))))
+                               nil
+                               (keys field->type))]
+                (assoc schema :encoders encoders)))
             (pull-counts [result location]
               (let [[_ {as :entity/as
                         counted :_count
@@ -1868,35 +1944,36 @@
                     (let [schema (as-> schema schema
                                    (assoc schema :relations
                                           (reduce-kv
-                                           (fn [r k _]
-                                             (->
-                                              r
-                                              (assoc-in [k :pinned] true)
-                                              (assoc-in [k :args :_join] :LEFT)))
-                                           (:_count schema)
-                                           (:_count schema)))
+                                            (fn [r k _]
+                                              (->
+                                                r
+                                                (assoc-in [k :pinned] true)
+                                                (assoc-in [k :args :_join] :LEFT)))
+                                            (:_count schema)
+                                            (:_count schema)))
                                    (dissoc schema :_count :fields)
                                    (if-not parents schema
-                                           (update schema :args assoc-in [:_eid :_in] (long-array parents))))
+                                     (update schema :args assoc-in [:_eid :_in] (long-array parents))))
                           [_ from] (search-stack-from schema)
                           ;;
                           [count-selections from-data]
                           (reduce-kv
-                           (fn [[statements data] as {etable :entity/as :as schema}]
-                             (let [t (name as)
-                                   [[[_ [statement]]] statement-data] (binding [*ignore-maybe* false]
-                                                                        (-> schema query-selection->sql))]
-                               [(conj statements (if (empty? statement)
-                                                   (format
-                                                    "count(distinct %s._eid) as %s"
-                                                    etable t)
-                                                   (format
-                                                    "count(distinct case when %s then %s._eid end) as %s"
-                                                    statement etable t)))
-                                (if statement-data (into data statement-data)
-                                    data)]))
-                           [[] []]
-                           counted)
+                            (fn [[statements data] as {etable :entity/as :as schema}]
+                              (let [t (name as)
+                                    [[[_ [statement]]] statement-data] (binding [*ignore-maybe* false]
+                                                                         (-> schema 
+                                                                             query-selection->sql))]
+                                [(conj statements (if (empty? statement)
+                                                    (format
+                                                      "count(distinct %s._eid) as %s"
+                                                      etable t)
+                                                    (format
+                                                      "count(distinct case when %s then %s._eid end) as %s"
+                                                      statement etable t)))
+                                 (if statement-data (into data statement-data)
+                                   data)]))
+                            [[] []]
+                            counted)
                           ;;
                           ;; [where where-data]  (search-stack-args schema)
                           ;; TODO - ignore where for now, as it should be part of
@@ -1905,10 +1982,10 @@
                           ;;
                           [query-string :as query]
                           (as->
-                           (format
-                            "select %s._eid as parent_id, %s\nfrom %s"
-                            as (str/join ", " count-selections) from)
-                           query
+                            (format
+                              "select %s._eid as parent_id, %s\nfrom %s"
+                              as (str/join ", " count-selections) from)
+                            query
                             ;;
                             (if-not where
                               query
@@ -1920,14 +1997,14 @@
                             (reduce into [query] (remove nil? [from-data where-data])))
                           ;;
                           _ (log/tracef
-                             "[%s] Sending counts aggregate query:\n%s"
-                             table query-string)
+                              "[%s] Sending counts aggregate query:\n%s\n%s\n%s"
+                              table query-string from-data where-data)
                           result (postgres/execute! con query *return-type*)]
                       (reduce
-                       (fn [r {:keys [parent_id] :as data}]
-                         (assoc r parent_id {:_count (dissoc data :parent_id)}))
-                       nil
-                       result))))))
+                        (fn [r {:keys [parent_id] :as data}]
+                          (assoc r parent_id {:_count (dissoc data :parent_id)}))
+                        nil
+                        result))))))
             (pull-numerics
               [_ location]
               (let [[_ {as :entity/as
@@ -1951,10 +2028,12 @@
                                  (fn [[statements data] target-key [field-key field-args]]
                                    (let [[statement-stack statement-data]
                                          (binding [*ignore-maybe* false]
-                                           (-> aggregate-schema
-                                               (get-in [rkey operation])
-                                               (merge field-args)
-                                               query-selection->sql))
+                                           (let [relation-schema (get-in aggregate-schema [:relations rkey])
+                                                 operation-args (get relation-schema operation)]
+                                             (-> relation-schema
+                                                 (merge operation-args)
+                                                 (deep-merge field-args)
+                                                 query-selection->sql)))
                                          j :and
                                          statement (when (not-empty statement-stack)
                                                      (str/join
@@ -1987,8 +2066,9 @@
                                                     " then " as "." (name field-key)
                                                     " else null end"))
                                              (name rkey) (name operation) (name target-key)))
-                                      (if-not statement-data data
-                                              (into data statement-data))]))
+                                      (if-not statement-data
+                                        data
+                                        (into data statement-data))]))
                                  result
                                  definition))
                               result
@@ -2013,8 +2093,8 @@
                             ;;
                             (reduce into [query] (remove nil? [numerics-data where-data])))
                           _ (log/tracef
-                             "[%s] Sending numerics aggregate query:\n%s"
-                             table query-string)
+                             "[%s] Sending numerics aggregate query:\n%s\n%s\n%s"
+                             table query-string numerics-data where-data)
                           result (postgres/execute! con query *return-type*)]
                       (reduce
                        (fn [r {:keys [parent_id] :as data}]
