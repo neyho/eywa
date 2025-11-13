@@ -86,6 +86,8 @@ EYWA simplifies complex workflows by combining **identity management** and **dat
 #### Windows
 
 ```ps1
+# Maybe you will have to disable executino policy
+# Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
 Invoke-WebRequest -Uri "https://s3.eu-central-1.amazonaws.com/eywa.cli/install_eywa_cli.ps1" -OutFile eywa_cli_install.ps1
 ./eywa_cli_install.ps1
 rm eywa_cli_install.ps1
