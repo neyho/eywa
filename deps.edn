@@ -1,49 +1,53 @@
-{:mvn/repos {"rpl"     {:url "https://nexus.redplanetlabs.com/repository/maven-public-releases"}
+{:mvn/repos {"rpl" {:url "https://nexus.redplanetlabs.com/repository/maven-public-releases"}
              "central" {:url "https://repo1.maven.org/maven2/"}
              "clojars" {:url "https://repo.clojars.org/"}}
  :deps
  {;; IAM
-  buddy/buddy-sign                             {:mvn/version "3.5.351"}
-  buddy/buddy-core                             {:mvn/version "1.11.423"}
-  buddy/buddy-hashers                          {:mvn/version "2.0.167"}
-  environ/environ                              {:mvn/version "1.2.0"}
-  version-clj/version-clj                      {:mvn/version "2.0.3"}
-  hiccup/hiccup                                {:mvn/version "2.0.0-RC3"}
+  buddy/buddy-sign {:mvn/version "3.5.351"}
+  buddy/buddy-core {:mvn/version "1.11.423"}
+  buddy/buddy-hashers {:mvn/version "2.0.167"}
+  environ/environ {:mvn/version "1.2.0"}
+  version-clj/version-clj {:mvn/version "2.0.3"}
+  hiccup/hiccup {:mvn/version "2.0.0-RC3"}
 
   ;; CORE
-  nano-id/nano-id                              {:mvn/version "1.1.0"}
-  org.clojure/core.async                       {:mvn/version "1.6.681"}
-  org.clojure/data.json                        {:mvn/version "2.5.1"}
+  nano-id/nano-id {:mvn/version "1.1.0"}
+  org.clojure/core.async {:mvn/version "1.6.681"}
+  org.clojure/data.json {:mvn/version "2.5.1"}
   ;; POSTGRES
-  org.postgresql/postgresql                    {:mvn/version "42.7.4"}
-  com.github.seancorfield/next.jdbc            {:mvn/version "1.3.909"}
-  com.zaxxer/HikariCP                          {:mvn/version "6.2.1"}
+  org.postgresql/postgresql {:mvn/version "42.7.4"}
+  com.github.seancorfield/next.jdbc {:mvn/version "1.3.909"}
+  com.zaxxer/HikariCP {:mvn/version "6.2.1"}
   ;; SERVER
-  org.bouncycastle/bcprov-jdk15on              {:mvn/version "1.70" :scope "test"}
-  org.bouncycastle/bcpkix-jdk15on              {:mvn/version "1.70" :scope "test"}
-  org.clojure/data.codec                       {:mvn/version "0.2.0"}
-  org.clojure/data.csv                         {:mvn/version "1.1.0"}
-  com.walmartlabs/lacinia                      {:mvn/version "1.2.2"}
-  com.github.gersak/lacinia-pedestal           {:mvn/version "1.3.1"
-                                                :exclusions [com.walmartlabs/lacinia]}
+  org.bouncycastle/bcprov-jdk15on {:mvn/version "1.70"
+                                   :scope "test"}
+  org.bouncycastle/bcpkix-jdk15on {:mvn/version "1.70"
+                                   :scope "test"}
+  org.clojure/data.codec {:mvn/version "0.2.0"}
+  org.clojure/data.csv {:mvn/version "1.1.0"}
+  com.walmartlabs/lacinia {:mvn/version "1.2.2"}
+  com.github.gersak/lacinia-pedestal {:mvn/version "1.3.1"
+                                      :exclusions [com.walmartlabs/lacinia]}
   ; com.walmartlabs/lacinia                      {:local/root "../../lacinia"}
   ; com.walmartlabs/lacinia-pedestal             {:local/root "../../lacinia-pedestal"}
-  org.clojure/math.combinatorics               {:mvn/version "0.3.0"}
+  org.clojure/math.combinatorics {:mvn/version "0.3.0"}
   ;; Logging - chosen because it follows pedestal and lacinia
   ;; they are both using clojure.tools.logging
-  ch.qos.logback/logback-classic               {:mvn/version "1.5.12"}
-  org.clojure/tools.logging                    {:mvn/version "1.3.0"}
+  ch.qos.logback/logback-classic {:mvn/version "1.5.12"}
+  org.clojure/tools.logging {:mvn/version "1.3.0"}
   ;;
-  camel-snake-kebab/camel-snake-kebab          {:mvn/version "0.4.3"}
-  com.github.gersak/vura                       {:mvn/version "0.6.0"}
+  camel-snake-kebab/camel-snake-kebab {:mvn/version "0.4.3"}
+  com.github.gersak/vura {:mvn/version "0.6.0"}
   ; com.github.gersak/vura                       {:local/root "../../vura"}
   ; com.github.gersak/shadow-css                 {:local/root "../../shadow-css"}
-  com.github.gersak/shadow-css                 {:mvn/version "0.5.0"}
-  dev.gersak/patcho                            {:mvn/version "0.3.0"}
-  babashka/fs                                  {:mvn/version "0.5.22"}
+  com.github.gersak/shadow-css {:mvn/version "0.5.0"}
+  dev.gersak/patcho {:mvn/version "0.3.0"}
+  babashka/fs {:mvn/version "0.5.22"}
+
+  org.clojars.pntblnk/clj-ldap {:mvn/version "0.0.17"}
 
   ;; Storage
-  software.amazon.awssdk/s3                    {:mvn/version "2.31.45"}}
+  software.amazon.awssdk/s3 {:mvn/version "2.31.45"}}
 
  :paths ["src/clj" "src/cljc" "src/cljs" "src/css" "resources"]
  :version "0.4.30"
@@ -52,7 +56,7 @@
  {:dev
   {:extra-paths ["src/dev" "src/css" "frontend/dist" "test" "patcho/src"]
    :extra-deps {thheller/shadow-cljs {:mvn/version "2.20.20"}
-                nrepl/nrepl          {:mvn/version "1.3.0"}}}
+                nrepl/nrepl {:mvn/version "1.3.0"}}}
   ;;
   :db
   {:extra-paths ["src/db"]}
@@ -72,14 +76,14 @@
   ;;
   :build
   {:deps
-   {io.github.clojure/tools.build   {:mvn/version "0.9.4"}
+   {io.github.clojure/tools.build {:mvn/version "0.9.4"}
     com.github.clj-easy/graal-build-time {:mvn/version "0.1.4"}
-    org.clojure/data.json           {:mvn/version "2.5.1"}
-    com.cognitect.aws/api           {:mvn/version "0.8.539"
-                                     :exclusions [org.clojure/data.json]}
-    org.slf4j/slf4j-nop             {:mvn/version "2.0.12"}
-    com.cognitect.aws/endpoints     {:mvn/version "1.1.12.110"}
-    com.cognitect.aws/s3            {:mvn/version "814.2.991.0"}}
+    org.clojure/data.json {:mvn/version "2.5.1"}
+    com.cognitect.aws/api {:mvn/version "0.8.539"
+                           :exclusions [org.clojure/data.json]}
+    org.slf4j/slf4j-nop {:mvn/version "2.0.12"}
+    com.cognitect.aws/endpoints {:mvn/version "1.1.12.110"}
+    com.cognitect.aws/s3 {:mvn/version "814.2.991.0"}}
    :ns-default build}
   :css
   {:extra-paths ["src/css"]
@@ -93,5 +97,5 @@
               "-Dfile.encoding=UTF-8"]}
   ;; RocksDB
   :rocks {:extra-deps
-          {org.rocksdb/rocksdbjni          {:mvn/version "8.1.1.1"}
-           org.clj-commons/byte-streams    {:mvn/version "0.3.2"}}}}}
+          {org.rocksdb/rocksdbjni {:mvn/version "8.1.1.1"}
+           org.clj-commons/byte-streams {:mvn/version "0.3.2"}}}}}
