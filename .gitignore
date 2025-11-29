@@ -45,3 +45,7 @@ cljs-runtime/
 *.png
 *.jpg
 *.old
+
+# Docker
+docker/backups/
+*.sql.backup

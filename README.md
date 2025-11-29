@@ -83,6 +83,75 @@ EYWA simplifies complex workflows by combining **identity management** and **dat
 
 ## Quickstart
 
+### 🐳 Docker (Recommended for Showcase)
+
+The fastest way to try EYWA is using Docker. This includes PostgreSQL, EYWA Core (IAM + Datacraft), and the frontend UI - everything you need in one command:
+
+```bash
+# Clone the repository
+git clone https://github.com/neyho/eywa-core.git
+cd eywa-core
+
+# Start EYWA
+docker-compose up -d
+
+# Access EYWA at http://localhost:8080/eywa/
+# Default credentials: admin / admin
+```
+
+**What's Included:**
+- ✅ **PostgreSQL 16** - Alpine-based database (267 MB)
+- ✅ **EYWA Core** - OAuth2.1 + OIDC + Datacraft (313 MB)
+- ✅ **Web UI** - Full graphical interface for data modeling
+- ✅ **Auto-initialization** - Database schemas, encryption, admin user
+- ✅ **OAuth Persistence** - Production-ready session management
+- 📦 **Total Size**: ~580 MB (compressed image layers)
+
+**First Run - Automatic Setup:**
+EYWA will automatically:
+- Start PostgreSQL database
+- Initialize IAM and Datacraft schemas
+- Configure encryption keys (auto-generated, persisted)
+- Set up OAuth persistence to database
+- Create admin user (username: `admin`, password: `admin`)
+- Serve the web UI from container at `/eywa/`
+
+**Configuration:**
+All settings in `docker-compose.yml` can be customized:
+```yaml
+# Admin credentials (CHANGE FOR PRODUCTION!)
+ADMIN_USERNAME: admin
+ADMIN_PASSWORD: admin
+
+# Database settings
+POSTGRES_PASSWORD: eywa
+
+# Custom encryption key (optional, auto-generated if not set)
+ENCRYPTION_KEY: your-secure-key-here
+```
+
+**Useful Commands:**
+```bash
+docker-compose logs -f eywa      # View EYWA logs
+docker-compose logs -f postgres  # View database logs
+docker-compose restart eywa      # Restart EYWA
+docker-compose down              # Stop all services
+docker-compose down -v           # Stop and remove data volumes
+```
+
+**Using Pre-built Image (Coming Soon):**
+```bash
+# Pull from Docker Hub (when published)
+docker pull neyho/eywa-core:latest
+docker-compose up -d
+```
+
+For detailed Docker documentation, production deployment tips, and troubleshooting, see [docker/README.md](docker/README.md)
+
+---
+
+### 💻 Manual Installation
+
 #### Windows
 
 ```ps1

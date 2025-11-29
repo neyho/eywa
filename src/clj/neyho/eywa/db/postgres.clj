@@ -1,15 +1,15 @@
 (ns neyho.eywa.db.postgres
   (:require
-   [neyho.eywa :as eywa]
-   [neyho.eywa.db]
-   [clojure.tools.logging :as log]
-   clojure.pprint
-   [next.jdbc :as jdbc]
-   [environ.core :refer [env]]
-   [neyho.eywa.db.postgres.next
-    :refer [execute-one! clear-connections]])
+    clojure.pprint
+    [clojure.tools.logging :as log]
+    [environ.core :refer [env]]
+    [next.jdbc :as jdbc]
+    [neyho.eywa :as eywa]
+    [neyho.eywa.db]
+    [neyho.eywa.db.postgres.next
+     :refer [execute-one! clear-connections]])
   (:import
-   [com.zaxxer.hikari HikariDataSource]))
+    [com.zaxxer.hikari HikariDataSource]))
 
 (defn postgres-connected? [datasource] (when datasource (not (.isClosed datasource))))
 
@@ -20,7 +20,7 @@
                          :as data}]
   (let [url (str "jdbc:postgresql://" host \: port \/ db)
         datasource (doto
-                    (HikariDataSource.)
+                     (HikariDataSource.)
                      (.setDriverClassName "org.postgresql.Driver")
                      (.setJdbcUrl url)
                      (.setUsername user)
@@ -43,26 +43,27 @@
   (def db (connect (from-env)))
   (def db
     (connect
-     (neyho.eywa/map->Postgres
-      {:host "eywa-development.caffmhmswqhy.eu-west-1.rds.amazonaws.com"
-       :port "5432"
-       :user "eywa"
-       :password "wZV2F9LZ8jeMmq7v"
-       :max-connections 2
-       :db "kb_dev"})))
+      (neyho.eywa/map->Postgres
+        {:host "eywa-development.caffmhmswqhy.eu-west-1.rds.amazonaws.com"
+         :port "5432"
+         :user "eywa"
+         :password "wZV2F9LZ8jeMmq7v"
+         :max-connections 2
+         :db "kb_dev"})))
   (.close (-> db :datasource))
   (def db
     (connect
-     (neyho.eywa/map->Postgres
-      {:host "drka-zbrka-10115.7tc.aws-eu-central-1.cockroachlabs.cloud"
-       :port "26257"
-       :user "robert"
-       :max-connections 2
-       :password "mNg5OTMVEakGL9hpXDFslA"
-       :db "defaultdb"}))))
+      (neyho.eywa/map->Postgres
+        {:host "drka-zbrka-10115.7tc.aws-eu-central-1.cockroachlabs.cloud"
+         :port "26257"
+         :user "robert"
+         :max-connections 2
+         :password "mNg5OTMVEakGL9hpXDFslA"
+         :db "defaultdb"}))))
 
 (defn check-connection-params
-  [{:keys [host db user password] :as data}]
+  [{:keys [host db user password]
+    :as data}]
   (letfn [(check [x message]
             (when-not x (throw (ex-info message data))))]
     (check host "POSGRES_HOST not specified")
@@ -108,21 +109,22 @@
 (defn create-db
   "Function will setup create new database using admin account. When new database
   is created function will return HikariDataSource connection to that new database"
-  [^neyho.eywa.Postgres {:keys [host] :as admin} database-name]
+  [^neyho.eywa.Postgres {:keys [host]
+                         :as admin} database-name]
   (let [admin-db (connect admin)]
     (log/infof "Creating database %s at %s" database-name host)
     ;; Admin DB
     (try
       (with-open [connection (jdbc/get-connection (:datasource admin-db))]
         (execute-one!
-         connection
-         [(format "create database %s" database-name)]))
+          connection
+          [(format "create database %s" database-name)]))
       (let [db (connect (assoc admin :db database-name))]
         (try
           (with-open [connection (jdbc/get-connection (:datasource db))]
             (execute-one!
-             connection
-             ["create extension \"uuid-ossp\""]))
+              connection
+              ["create extension \"uuid-ossp\""]))
           (catch Throwable ex
             (println "Couldn't create uuid-ossp extension")
             (throw ex)))
@@ -137,15 +139,16 @@
 
 (defn drop-db
   "Removes DB from Postgres server"
-  [{:keys [host] :as admin} database]
+  [{:keys [host]
+    :as admin} database]
   (log/infof "Droping DB %s at %s" database host)
   (let [admin (connect admin)]
     (try
       (with-open [con (:datasource admin)]
         (clear-connections con database)
         (execute-one!
-         con
-         [(format "drop database if exists %s" database)]))
+          con
+          [(format "drop database if exists %s" database)]))
       (finally
         (.close (:datasource admin)))))
   nil)
@@ -156,11 +159,11 @@
   (let [db (connect admin)]
     (with-open [con (jdbc/get-connection (:datasource db))]
       (jdbc/execute!
-       con
-       [(format "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='%s'" database)])
+        con
+        [(format "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='%s'" database)])
       (jdbc/execute!
-       con
-       [(format "create database %s with template '%s'" backup database)]))
+        con
+        [(format "create database %s with template '%s'" backup database)]))
     true))
 
 (defonce connection-agent (agent {:running? true}))
@@ -176,9 +179,9 @@
               (try
                 (when (nil? database)
                   (throw
-                   (ex-info
-                    "Database not specified"
-                    data)))
+                    (ex-info
+                      "Database not specified"
+                      data)))
                 (when-let [db (connect database)]
                   (alter-var-root #'neyho.eywa.db/*db* (constantly db))
                   nil)
@@ -194,7 +197,8 @@
 
 (defn start-connection-monitor
   [database]
-  (send-off connection-agent (fn [_] {:running? true :period 10000}))
+  (send-off connection-agent (fn [_] {:running? true
+                                      :period 10000}))
   (send-off connection-agent monitor-connection database))
 
 (defn stop-connection-monitor
@@ -210,9 +214,9 @@
   ([] (start (from-env)))
   ([database]
    (log/infof
-    "[POSTGRES] Connecting to:\n%s"
-    (with-out-str
-      (clojure.pprint/pprint (dissoc database :password))))
+     "[POSTGRES] Connecting to:\n%s"
+     (with-out-str
+       (clojure.pprint/pprint (dissoc database :password))))
    (when-let [db (connect database)]
      (alter-var-root #'neyho.eywa.db/*db* (constantly db))
      nil)

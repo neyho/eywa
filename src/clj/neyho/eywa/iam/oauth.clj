@@ -96,6 +96,11 @@
                   :keys [prompt redirect_uri state]} request
                  ;;
                  silent? (and (some? cookie-session) (= prompt "none"))]
+             ; (def cookie-session cookie-session)
+             ; (def silent? silent?)
+             ; (def prompt prompt)
+             ; (def redirect_uri redirect_uri)
+             ; (def state state)
              ; (-> request :idsrv/session)
              (letfn [(save
                        ([code data]

@@ -140,6 +140,10 @@
          session-client :id} (get @core/*clients* client-euuid)
         grants (set allowed-grants)
         {:keys [active]} (core/get-session-resource-owner session)]
+    ; (def session session)
+    ; (def grants grants)
+    ; (def codes @*authorization-codes*)
+    ; (def session-details (core/get-session-resource-owner session))
     (log/debugf
       "[%s] Processing token code grant for code: %s\n%s"
       session code (pprint request))
