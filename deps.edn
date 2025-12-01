@@ -46,6 +46,7 @@
 
   org.clojars.pntblnk/clj-ldap {:mvn/version "0.0.17"}}
 
+
  :paths ["src/clj" "src/cljc" "src/cljs" "src/css" "resources"]
  :version "0.4.30"
 

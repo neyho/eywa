@@ -48,14 +48,14 @@
   (update-attribute [this euuid f])
   (remove-attribute [this attribute]))
 
-(defrecord ERDRelation [euuid from to from-label to-label cardinality path])
+(defrecord ERDRelation [euuid from to from-label to-label cardinality path active])
 (defrecord NewERDRelation [euuid entity type])
 (defrecord ERDEntityAttribute [euuid seq name constraint type configuration active])
 
 (defn cloned? [{:keys [clone]}] clone)
 (defn original [{:keys [original]}] original)
 
-(defrecord ERDEntity [euuid position width height name attributes type configuration clone original]
+(defrecord ERDEntity [euuid position width height name attributes type configuration clone original active]
   ;;
   EntityConstraintProtocol
   (set-entity-unique-constraints [this constraints]
@@ -83,8 +83,8 @@
                   (generate-attribute-id this))
           entity (update this :attributes (fnil conj [])
                          (assoc attribute
-                           :euuid euuid
-                           :seq (count attributes)))]
+                                :euuid euuid
+                                :seq (count attributes)))]
       (if (= "unique" (:constraint attribute))
         (update-entity-unique-constraints
          entity
@@ -151,10 +151,10 @@
     (->
      this
      (assoc :attributes
-       (vec
-        (keep-indexed
-         (fn [idx a] (assoc a :seq idx))
-         (remove #(= euuid (:euuid %)) attributes))))
+            (vec
+             (keep-indexed
+              (fn [idx a] (assoc a :seq idx))
+              (remove #(= euuid (:euuid %)) attributes))))
      (update update-entity-unique-constraints
              (fn [unique-bindings]
                (reduce
@@ -287,12 +287,12 @@
           :to :from
           :to-label :from-label})
         (assoc :cardinality
-          (case (:cardinality relation)
-            "o2m" "m2o"
-            "o2o" "o2o"
-            "m2m" "m2m"
-            "m2o" "o2m"
-            relation))
+               (case (:cardinality relation)
+                 "o2m" "m2o"
+                 "o2o" "o2o"
+                 "m2m" "m2m"
+                 "m2o" "o2m"
+                 relation))
         map->ERDRelation)
     (merge
      (meta relation)
@@ -375,6 +375,148 @@
      (remove-entity final entity))
    model1
    (get-entities model2)))
+
+;; Ownership tracking functions
+(defn add-claim
+  "Adds version-uuid to the :claimed-by set of an entity or relation"
+  [model entity-or-relation-uuid version-uuid]
+  (cond
+    ;; Check if it's an entity
+    (get-in model [:entities entity-or-relation-uuid])
+    (update-in model [:entities entity-or-relation-uuid :claimed-by]
+               (fnil conj #{}) version-uuid)
+    ;; Check if it's a relation
+    (get-in model [:relations entity-or-relation-uuid])
+    (update-in model [:relations entity-or-relation-uuid :claimed-by]
+               (fnil conj #{}) version-uuid)
+    ;; Not found
+    :else model))
+
+(defn add-claims
+  "Adds version-uuid as a claim to all entities and relations in the provided model"
+  [global-model new-model version-uuid]
+  (let [;; Add claims to all entities in new-model
+        with-entity-claims
+        (reduce
+         (fn [gm entity]
+           (add-claim gm (:euuid entity) version-uuid))
+         global-model
+         (get-entities new-model))
+        ;; Add claims to all relations in new-model
+        with-relation-claims
+        (reduce
+         (fn [gm relation]
+           (add-claim gm (:euuid relation) version-uuid))
+         with-entity-claims
+         (get-relations new-model))]
+    with-relation-claims))
+
+(defn remove-claim
+  "Removes version-uuid from the :claimed-by set of an entity or relation"
+  [model entity-or-relation-uuid version-uuid]
+  (cond
+    ;; Check if it's an entity
+    (get-in model [:entities entity-or-relation-uuid])
+    (update-in model [:entities entity-or-relation-uuid :claimed-by]
+               (fnil disj #{}) version-uuid)
+    ;; Check if it's a relation
+    (get-in model [:relations entity-or-relation-uuid])
+    (update-in model [:relations entity-or-relation-uuid :claimed-by]
+               (fnil disj #{}) version-uuid)
+    ;; Not found
+    :else model))
+
+(defn remove-claims
+  "Removes all version-uuids from claims in the model, updates :active flag"
+  [model version-uuids]
+  (let [;; Remove claims from entities
+        updated-entities
+        (reduce-kv
+         (fn [entities entity-uuid entity]
+           (let [remaining-claims (clojure.set/difference
+                                   (get entity :claimed-by #{})
+                                   version-uuids)
+                 active? (not-empty remaining-claims)]
+             (assoc entities entity-uuid
+                    (assoc entity
+                           :claimed-by remaining-claims
+                           :active active?))))
+         {}
+         (:entities model))
+        ;; Remove claims from relations
+        updated-relations
+        (reduce-kv
+         (fn [relations relation-uuid relation]
+           (let [remaining-claims (clojure.set/difference
+                                   (get relation :claimed-by #{})
+                                   version-uuids)
+                 active? (not-empty remaining-claims)]
+             (assoc relations relation-uuid
+                    (assoc relation
+                           :claimed-by remaining-claims
+                           :active active?))))
+         {}
+         (:relations model))]
+    (assoc model
+           :entities updated-entities
+           :relations updated-relations)))
+
+(defn find-exclusive-entities
+  "Returns entities that are ONLY claimed by the provided version-uuids"
+  [model version-uuids]
+  (let [version-set (set version-uuids)]
+    (filter
+     (fn [entity]
+       (let [claims (get entity :claimed-by #{})]
+          ;; Exclusive if all claims are within version-uuids
+         (and (not-empty claims)
+              (clojure.set/subset? claims version-set))))
+     (get-entities model))))
+
+(defn find-exclusive-relations
+  "Returns relations that are ONLY claimed by the provided version-uuids"
+  [model version-uuids]
+  (let [version-set (set version-uuids)]
+    (filter
+     (fn [relation]
+       (let [claims (get relation :claimed-by #{})]
+          ;; Exclusive if all claims are within version-uuids
+         (and (not-empty claims)
+              (clojure.set/subset? claims version-set))))
+     (get-relations model))))
+
+(defn ensure-active-flags
+  "Takes a model with :claimed-by sets and returns a model with :active flags (no :claimed-by).
+   This is a pure function - it works on the model structure only, no DB access.
+   The :active flag is derived from :claimed-by, then :claimed-by is removed."
+  [model]
+  (let [;; Process entities: set :active from :claimed-by, then remove :claimed-by
+        updated-entities
+        (reduce-kv
+         (fn [entities entity-uuid entity]
+           (let [claims (get entity :claimed-by #{})
+                 active? (not-empty claims)]
+             (assoc entities entity-uuid
+                    (-> entity
+                        (assoc :active active?)
+                        (dissoc :claimed-by)))))
+         {}
+         (:entities model))
+        ;; Process relations: set :active from :claimed-by, then remove :claimed-by
+        updated-relations
+        (reduce-kv
+         (fn [relations relation-uuid relation]
+           (let [claims (get relation :claimed-by #{})
+                 active? (not-empty claims)]
+             (assoc relations relation-uuid
+                    (-> relation
+                        (assoc :active active?)
+                        (dissoc :claimed-by)))))
+         {}
+         (:relations model))]
+    (assoc model
+           :entities updated-entities
+           :relations updated-relations)))
 
 (defprotocol ERDModelProjectionProtocol
   (added? [this] "Returns true if this is added or false otherwise")

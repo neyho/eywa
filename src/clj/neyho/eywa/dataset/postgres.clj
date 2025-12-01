@@ -236,6 +236,15 @@
           core/added?
           (core/get-entities projection))
         ;;
+        ;; NEW: Detect reactivated entities (exist but were inactive)
+        reactivated-entities
+        (filter
+          (fn [entity]
+            (and (not (core/added? entity))
+                 (false? (:active (core/suppress entity))) ; Was inactive
+                 (true? (:active entity)))) ; Now active
+          (core/get-entities projection))
+        ;;
         changed-enties
         (filter
           core/diff?
@@ -259,6 +268,7 @@
         {crr true
          cr false} (group-by core/recursive-relation? changed-relations)]
     {:new/entities new-entities
+     :reactivated/entities reactivated-entities ; NEW
      :changed/entities changed-enties
      :new/relations nr
      :new/recursive-relations nrr
@@ -612,6 +622,7 @@
 (defn transform-database [ds projection configuration]
   (log/debugf "Transforming database\n%s" configuration)
   (let [{ne :new/entities
+         re :reactivated/entities ; NEW
          nr :new/relations
          nrr :new/recursive-relations
          ce :changed/entities
@@ -619,14 +630,20 @@
          crr :changed/recursive-relations} (analyze-projection projection)
         {amt :who/table} configuration]
     (log/tracef
-      "Transform projection analysis\nNew\n%s\nChanged\n%s"
+      "Transform projection analysis\nNew\n%s\nReactivated\n%s\nChanged\n%s"
       {:new/entities (map :name ne)
        :new/relations (map (juxt :from-label :to-label) nr)
        :new/recursive (map (juxt :from-label :to-label) nrr)}
+      {:reactivated/entities (map :name re)} ; NEW
       {:changed/entities (map :name ce)
        :changed/relations (map (juxt :from-label :to-label) cr)
        :changed/recursive (map (juxt :from-label :to-label) crr)})
     (jdbc/with-transaction [tx ds]
+      ;; Handle reactivated entities (table exists, just mark active)
+      (when (not-empty re)
+        (log/infof "Reactivating %d entities (tables already exist)" (count re))
+        (doseq [{:keys [name]} re]
+          (log/debugf "Reactivated entity: %s" name)))
       ;; Generate new entities
       (let [entity-priority {iu/user -100}
             ne (sort-by
@@ -848,112 +865,118 @@
 (def dataset-versions #uuid "d922edda-f8de-486a-8407-e62ad67bf44c")
 
 (defn last-deployed-model
+  "Builds global model from latest deployed version of each dataset.
+   Returns model with :claimed-by sets attached (transient claims).
+   Each version's entities/relations are marked as claimed by that version's UUID."
   [this]
   (let [datasets (dataset/search-entity
                    du/dataset
                    nil
                    {:versions
-                    [{:selections {:name nil
+                    [{:selections {:euuid nil
                                    :model nil
                                    :modified_on nil}
                       :args {:_where {:deployed {:_boolean :TRUE}}
                              :_limit 1
                              :_order_by {:modified_on :desc}}}]})
-        models (map
-                 (fn [{[version] :versions}]
-                   (:model version))
-                 (sort-by
-                   (fn [{[{:keys [modified_on]}] :versions}]
-                     modified_on)
-                   datasets))]
+        ;; Extract versions sorted by modification time
+        versions (sort-by
+                   :modified_on
+                   (mapcat :versions datasets))
+        ;; Start with empty model
+        initial-model (core/map->ERDModel {:entities {}
+                                           :relations {}})]
+    ;; Reduce over versions, adding structure AND claims
     (reduce
-      (fn [global model]
-        (core/join-models global model))
-      models)))
+      (fn [global {:keys [euuid model]}]
+        (let [global (core/join-models global model)]
+          (if model
+            (core/add-claims global model euuid)
+            global)))
+      initial-model
+      versions)))
 
-;; I understand that this was used in some old logic, but i can't see advantage of
-;; this approach when we have get-last-deployed
-#_(defn db->model
-    [this]
-    (let [entities (keep
-                     (fn [{:keys [attributes]
-                           :as e}]
-                       (when-let [attributes (not-empty
-                                               (map
-                                                 #(core/map->ERDEntityAttribute %)
-                                                 attributes))]
-                         (core/map->ERDEntity (assoc e :attributes attributes))))
-                     (search-entity
-                       this du/dataset-entity nil
-                       {:_eid nil
-                        :euuid nil
-                        :name nil
-                        :locators nil
-                        :constraints nil
-                        :height nil
-                        :width nil
-                        :configuration nil
-                        :attributes [{:selections
-                                      {:euuid nil
-                                       :seq nil
-                                       :name nil
-                                       :type nil
-                                       :constraint nil
-                                       :configuration nil
-                                       :active nil}}]}))
-          relations (map
-                      (fn [r]
-                        (core/map->ERDRelation
-                          (->
-                            r
-                            (update :from #(hash-map :euuid %))
-                            (update :to #(hash-map :euuid %))
-                            (clojure.set/rename-keys
-                              {:from_label :from-label
-                               :to_label :to-label}))))
-                      (search-entity
-                        this du/dataset-relation nil
-                        {:euuid nil
-                         :from nil
-                         :to nil
-                         :path nil
-                         :from_label nil
-                         :to_label nil
-                         :cardinality nil}))
-          versions (mapcat
-                     :versions
-                     (search-entity
-                       this du/dataset nil
-                       {:name nil
-                        :versions [{:args {:_order_by [{:modified_on :desc}]
-                                           :_where {:deployed {:_eq true}}
-                                           :_limit 1}
-                                    :selections {:name nil
-                                                 :configuration nil}}]}))
-          configuration (apply core/deep-merge (map :configuration versions))]
-      (reduce
-        core/set-relation
+;; Helper functions for claims-based deployment
+(defn check-entity-name-conflicts!
+  "Throws exception if new-model contains entities with conflicting names"
+  [current-model new-model]
+  #_(doseq [new-entity (core/get-entities new-model)]
+      (when-let [existing (erd/find-entity-by-name current-model (:name new-entity))]
+        (when (not= (:euuid existing) (:euuid new-entity))
+          (throw
+            (ex-info
+              (format "Entity name conflict: '%s' already exists with different UUID" (:name new-entity))
+              {:type ::entity-name-conflict
+               :new-entity new-entity
+               :existing-entity existing
+               :table-name (entity->table-name new-entity)}))))))
+
+(defn replace-entity-definitions
+  "Replace entity/relation definitions (last wins), preserve existing claims"
+  [global-model new-model]
+  (let [;; Update entities
+        updated-entities
         (reduce
-          core/set-entity
-          (core/map->ERDModel {:configuration configuration})
-          entities)
-        relations)))
+          (fn [entities entity]
+            (let [euuid (:euuid entity)
+                  existing-claims (get-in global-model [:entities euuid :claimed-by] #{})]
+              (assoc entities euuid
+                     (assoc entity :claimed-by existing-claims :active (not-empty existing-claims)))))
+          (:entities global-model)
+          (core/get-entities new-model))
+        ;; Update relations
+        updated-relations
+        (reduce
+          (fn [relations relation]
+            (let [euuid (:euuid relation)
+                  existing-claims (get-in global-model [:relations euuid :claimed-by] #{})]
+              (assoc relations euuid
+                     (assoc relation :claimed-by existing-claims :active (not-empty existing-claims)))))
+          (:relations global-model)
+          (core/get-relations new-model))]
+    (assoc global-model
+      :entities updated-entities
+      :relations updated-relations)))
+
+(comment
+  (def db *db*))
 
 (extend-type neyho.eywa.Postgres
   core/DatasetProtocol
-  (core/deploy! [this {:keys [model]
+  (core/deploy! [this {:keys [model euuid]
                        :as version}]
+    ; (def this *db*)
     (try
-      (comment
-        (def this this)
-        (def current-model (core/get-model this))
-        (def version version)
-        (def model model)
-        (def dataset' (assoc version :model (core/join-models current-model model))))
-      (let [dataset' (core/mount this version)
+      (let [;; Get current global model WITH CLAIMS (or empty if first deployment)
+            ;; MUST use last-deployed-model (not fallback) because we need claims
+            current-model (or (try
+                                (last-deployed-model this)
+                                (catch Throwable e
+                                  (log/warn "Cannot query dataset entities during deploy, starting with empty model")
+                                  nil))
+                              (core/map->ERDModel {:entities {}
+                                                   :relations {}}))
+
+            ;; 1. Check for entity name conflicts (throws on conflict)
+            _ (check-entity-name-conflicts! current-model model)
+
+            ;; 2. Replace definitions (last wins) and add claims
+            model-with-claims (-> current-model
+                                  (replace-entity-definitions model)
+                                  (core/add-claims model euuid))
+
+            ;; 3. Call mount to transform database with updated global model
+            dataset' (core/mount this (assoc version :model model-with-claims))
+
+            ;; 4. Convert claims to :active flags and remove :claimed-by for persistence
+            updated-model (-> model-with-claims
+                              core/ensure-active-flags
+                              (assoc :version 1))
+
+            ;; 5. Prepare version metadata for saving (with original model v1, not global)
             version'' (assoc
                         version
-                        :model model
+                        :model (assoc model :version 1)
                         :deployed true
                         :entities (core/get-entities model)
                         :relations
@@ -966,12 +989,13 @@
                                     (update :to :euuid))))
                           []
                           (core/get-relations model)))]
+
         ;; Reload current projection so that you can sync data
         ;; for new model
         (core/reload this dataset')
         (log/info "Preparing model for DB")
         (sync-entity this dataset-versions version'')
-        (core/add-to-deploy-history this (core/get-model this))
+        (core/add-to-deploy-history this updated-model)
         version'')
       (catch Throwable e
         (log/errorf e "Couldn't deploy dataset %s@%s"
@@ -982,40 +1006,69 @@
   (core/recall! [this version]
     (core/unmount this version)
     (let [db-model (core/get-last-deployed this)
-          model (core/get-model this)]
-      (delete-entity this du/dataset-version {:euuid (:euuid version)})
-      (dataset/save-model db-model)
+          _ (delete-entity this du/dataset-version {:euuid (:euuid version)})
+          model (last-deployed-model this)]
+      (dataset/save-model model)
       (query/deploy-schema (model->schema model))
       (core/reload this)))
   ;;
   (core/destroy! [this
                   {versions :versions
-                   module-name :name}]
-    (let [uber-model (when (not-empty versions)
-                       (reduce
-                         (fn [old new]
-                           (core/join-models old new))
-                         (map :model versions)))]
-      (when uber-model
-        (core/unmount this {:model uber-model})
-        (doseq [{:keys [euuid]
-                 version-name :name} (reverse versions)]
-          (log/infof "Destroying dataset version %s@%s" module-name version-name)
-          (delete-entity this du/dataset-version {:euuid euuid}))
-        (let [db-model (core/get-last-deployed this)
-              model (core/get-model this)]
-          (dataset/save-model db-model)
-          (query/deploy-schema (model->schema model))
-          (let [global-model (core/reload this)]
-            (core/add-to-deploy-history this global-model)
-            ;; Restart core
-            global-model)))))
+                   name :name
+                   :as dataset}]
+    (let [version-uuids (set (map :euuid versions))
+          ;; Get model WITH CLAIMS so we can check exclusivity
+          ;; MUST use last-deployed-model (not fallback) because we need claims
+          current-model (try
+                          (last-deployed-model this)
+                          (catch Throwable e
+                            (log/error e "Cannot query dataset entities during destroy")
+                            (throw (ex-info "Cannot destroy dataset: system not fully initialized"
+                                            {:type ::system-not-initialized}
+                                            e))))
+
+          ;; 1. Find entities/relations exclusive to this dataset (before removing claims)
+          exclusive-entities (core/find-exclusive-entities current-model version-uuids)
+          exclusive-relations (core/find-exclusive-relations current-model version-uuids)
+
+          ;; 2. Remove claims from deleted versions
+          model-with-claims (core/remove-claims current-model version-uuids)
+
+          ;; 3. Convert claims to :active flags for persistence
+          updated-model (-> model-with-claims
+                            core/ensure-active-flags
+                            (assoc :version 1))]
+
+      ;; 4. Unmount ONLY exclusive entities/relations
+      (when (or (not-empty exclusive-entities) (not-empty exclusive-relations))
+        (log/infof "Pruning %d exclusive entities and %d relations from dataset %s"
+                   (count exclusive-entities) (count exclusive-relations) name)
+        #_(core/unmount this exclusive-entities exclusive-relations))
+
+      ;; 5. Delete version records
+      (doseq [{:keys [euuid]
+               version-name :name} (reverse versions)]
+        (log/infof "Destroying dataset version %s@%s" name version-name)
+        (delete-entity this du/dataset-version {:euuid euuid}))
+
+      ;; 6. Save updated model and reload
+      (dataset/save-model updated-model)
+      (query/deploy-schema (model->schema updated-model))
+      (core/add-to-deploy-history this updated-model)
+      (core/reload this)))
   (core/get-model
     [_]
     (dataset/deployed-model))
   (core/reload
     ([this]
-     (let [model' (core/get-last-deployed this) #_(db->model this)
+     (comment
+       (def this *db*))
+     (let [;; Get model with claims from last-deployed-model
+           model-with-claims (core/get-last-deployed this)
+           ;; Convert claims to :active flags
+           model' (-> model-with-claims
+                      core/ensure-active-flags
+                      (assoc :version 1))
            schema (model->schema model')]
        (dataset/save-model model')
        (query/deploy-schema schema)
@@ -1037,6 +1090,7 @@
          (lacinia/add-shard ::datasets (fn [] (lacinia/generate-lacinia-schema this)))
          (catch Throwable e
            (log/error e "Couldn't add lacinia schema shard")))
+       (core/reload this)
        model')))
   (core/mount
     [this {model :model
@@ -1046,15 +1100,8 @@
       (let [current-model (or
                             (core/get-model this)
                             (core/map->ERDModel nil))
-            ; _ (do
-            ;     (def current-model current-model)
-            ;     (def model model))
+            ;; Model already has updated definitions and claims from deploy!
             projection (core/project current-model model)]
-        (comment
-          (core/get-entity model #uuid "c3835dcb-b8d7-40b7-be1c-97b7f50225d0")
-          (def relation (first (core/get-relations model)))
-          (def projection (core/project current-model model))
-          (analyze-projection (core/project current-model model)))
         (binding [*model* current-model]
           (transform-database
             con projection
@@ -1067,13 +1114,15 @@
                     #(core/get-entity % iu/user)
                     [current-model projection])))
               (:configuration model))))
-        (assoc version :model (core/join-models current-model model)))))
+        ;; Return model as-is (already contains full global state with claims)
+        (assoc version :model model))))
   (core/unmount
-    [this {:keys [model]}]
-    ;; USE Global model to reference true DB state
+    [this entities relations]
+    ;; Drop tables for specific entities and relations
     (let [global (core/get-model this)]
       (with-open [con (jdbc/get-connection (:datasource *db*))]
-        (doseq [relation (core/get-relations model)
+        ;; Drop relation tables
+        (doseq [relation relations
                 :let [{:keys [from to]
                        :as relation} (core/get-relation global (:euuid relation))
                       sql (format "drop table if exists \"%s\"" (relation->table-name relation))]]
@@ -1087,7 +1136,8 @@
             (delete-entity this du/dataset-relation (select-keys relation [:euuid]))
             (catch Throwable e
               (log/errorf e "Couldn't remove table %s" (relation->table-name relation)))))
-        (doseq [entity (core/get-entities model)
+        ;; Drop entity tables
+        (doseq [entity entities
                 :let [{:keys [attributes]
                        :as entity} (core/get-entity global (:euuid entity))]
                 :when (some? entity)]
@@ -1096,21 +1146,15 @@
                   enums-sql (drop-entity-enums-ddl entity)]
               (log/tracef "Removing entity %s\n%s" (:name entity) sql)
               (execute-one! con [sql])
-              ;; If SQL runs without error than this entity doesn't have
-              ;; is good to delete from  DB, as well as all attributes that
-              ;; are linked to this entity
+              ;; Delete metadata for this entity
               (delete-entity this du/dataset-entity (select-keys entity [:euuid]))
               (doseq [{:keys [euuid]} attributes]
                 (delete-entity this du/dataset-entity-attribute euuid))
               (when (not-empty enums-sql)
                 (log/trace "Removing %s enum types: %s" (:name entity) enums-sql)
                 (execute-one! con [enums-sql])))
-            ; (let [sql (format "drop table if exists \"%s_eid_seq\"" (entity->table-name entity))
-            ; (log/tracef "Removing entity PK sequence:\n %s" (:name entity) sqlt)
-            ; (execute-one! con [sqls])])
             (catch Throwable e
-              (log/errorf e "Couldn't remove table %s" (entity->table-name entity)))))))
-    (core/reload this))
+              (log/errorf e "Couldn't remove table %s" (entity->table-name entity))))))))
   (core/setup
     ([this]
      (comment
@@ -1177,8 +1221,12 @@
       (postgres/drop-db admin (:db this))))
   (core/get-last-deployed
     ([this]
-     #_(core/get-last-deployed this nil)
-     (last-deployed-model this))
+     (try
+       ;; Try to get directly from DB if datasets are initialised
+       (last-deployed-model this)
+       (catch Throwable _
+         ;; If that fails... Try to pull from __deployed
+         (core/get-last-deployed this 0))))
     ([_ offset]
      (with-open [connection (jdbc/get-connection (:datasource *db*))]
        (when-let [m (n/execute-one!

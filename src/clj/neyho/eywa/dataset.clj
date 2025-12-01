@@ -408,8 +408,6 @@
      (lacinia/add-shard ::dataset-directives (slurp (io/resource "dataset_directives.graphql")))
      (lacinia/add-shard ::datasets (slurp (io/resource "datasets.graphql")))
      (catch Throwable e (log/errorf e "Couldn't initialize Datasets...")))
-   ; (alter-var-root #'*datasets* (fn [_] db))
-   (dataset/reload db)
    (binding [dataset/*return-type* :edn]
      (bind-service-user #'neyho.eywa.data/*EYWA*))
    nil))
