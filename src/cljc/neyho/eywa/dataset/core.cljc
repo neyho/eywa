@@ -304,7 +304,16 @@
       (meta relation)
       {:dataset.relation/inverted? true})))
 
+
 (defn inverted-relation? [relation] (:dataset.relation/inverted? (meta relation)))
+
+(defn normalize-relation
+  [relation]
+  (if (inverted-relation? relation)
+    (with-meta
+      (invert-relation relation)
+      (dissoc (meta relation) :dataset.relation/inverted?))
+    relation))
 
 (defn direct-relation-from
   [{:keys [euuid]} {:keys [from to to-label]
@@ -374,7 +383,27 @@
     (update :entities deep-merge (:entities model2))
     (update :relations deep-merge (:relations model2))
     (update :configuration deep-merge (:configuration model2))
-    (update :clones deep-merge (:clones model2))))
+    (update :clones deep-merge (:clones model2))
+    (as-> joined-model
+          (reduce
+            (fn [m {:keys [euuid]
+                    :as entity}]
+              (let [claims-1 (get (get-entity model1 euuid) :claimed-by #{})
+                    claims-2 (get (get-entity model2 euuid) :claimed-by #{})
+                    claims (clojure.set/union claims-1 claims-2)]
+                (set-entity m (assoc entity :claimed-by claims))))
+            joined-model
+            (mapcat get-entities [model1 model2]))
+      (reduce
+        (fn [m {:keys [euuid]
+                :as relation}]
+          (let [claims-1 (get (get-relation model1 euuid) :claimed-by #{})
+                claims-2 (get (get-relation model2 euuid) :claimed-by #{})
+                claims (clojure.set/union claims-1 claims-2)]
+            (set-relation m (assoc relation :claimed-by claims))))
+        joined-model
+        (mapcat get-relations [model1 model2])))))
+
 
 (defn disjoin-model [model1 model2]
   (reduce
@@ -407,18 +436,19 @@
 
 (defn add-claims
   "Adds version-uuid as a claim to all entities and relations in the provided model"
-  [global-model new-model version-uuid]
-  (as-> global-model gm
-    (reduce
-      (fn [gm entity]
-        (add-claim gm (:euuid entity) version-uuid))
-      gm
-      (get-entities new-model))
-    (reduce
-      (fn [gm relation]
-        (add-claim gm (:euuid relation) version-uuid))
-      gm
-      (get-relations new-model))))
+  ([model version-uuid] (add-claims model model version-uuid))
+  ([global-model new-model version-uuid]
+   (as-> global-model gm
+     (reduce
+       (fn [gm entity]
+         (add-claim gm (:euuid entity) version-uuid))
+       gm
+       (get-entities new-model))
+     (reduce
+       (fn [gm relation]
+         (add-claim gm (:euuid relation) version-uuid))
+       gm
+       (get-relations new-model)))))
 
 (defn remove-claim
   "Removes version-uuid from the :claimed-by set of an entity or relation"
@@ -505,7 +535,7 @@
           (when (empty? claims)
             (throw
               (ex-info
-                "Relation doesn't have claims! All entities should have claims"
+                "Relation doesn't have claims! All relations should have claims"
                 relation)))
           (empty? (clojure.set/difference claims version-set))))
       (get-relations model))))
@@ -520,7 +550,7 @@
         (reduce-kv
           (fn [entities entity-uuid entity]
             (let [claims (get entity :claimed-by #{})
-                  active? (not-empty claims)]
+                  active? (boolean (not-empty claims))]
               (assoc entities entity-uuid
                      (-> entity
                          (assoc :active active?)
@@ -532,7 +562,7 @@
         (reduce-kv
           (fn [relations relation-uuid relation]
             (let [claims (get relation :claimed-by #{})
-                  active? (not-empty claims)]
+                  active? (boolean (not-empty claims))]
               (assoc relations relation-uuid
                      (-> relation
                          (assoc :active active?)
@@ -790,8 +820,8 @@
     (if (some? that)
       ;; Check if relations are the same
       (let [ks [:from-label :to-label :cardinality]
-            this (if (inverted-relation? this) (invert-relation this) this)
-            that (if (inverted-relation? that) (invert-relation that) that)
+            this (normalize-relation this)
+            that (normalize-relation that)
             ;; Compute difference between this and that
             [o _] (clojure.data/diff
                     (select-keys this ks)
@@ -840,19 +870,49 @@
       nil))
   (project
     [this that]
-    (reduce
-      (fn [m {id :euuid
-              :as r}]
-        (set-relation m (project (get-relation this id) r)))
+    (as-> that projection
       (reduce
         (fn [m {id :euuid
                 :as e}]
           (set-entity m (project (get-entity this id) e)))
-        that
-        (get-entities that))
-      (get-relations that)))
+        projection
+        (get-entities projection))
+      (reduce
+        (fn [m {id :euuid
+                :as r}]
+          (set-relation m (project (get-relation this id) r)))
+        projection
+        (get-relations projection))
+      ;; Take into account relations that are missing
+      ;; in that and entites have been changed in that
+      (let [that-relations (get-relations projection)
+            this-relations (distinct
+                             (mapcat
+                               (comp normalize-relation #(focus-entity-relations this %))
+                               (filter entity-changed? (get-entities projection))))
+            that-relation-euuids (set (map :euuid that-relations))
+            target-relations (remove
+                               (comp that-relation-euuids :euuid)
+                               this-relations)]
+        (reduce
+          (fn [m {id :euuid
+                  {from-euuid :euuid} :from
+                  {to-euuid :euuid} :to
+                  :as r}]
+            (let [from (get-entity projection from-euuid)
+                  to (get-entity projection to-euuid)]
+              (if (and from to)
+                (set-relation m
+                              (project (get-relation this id)
+                                       (-> r
+                                           (assoc :from from)
+                                           (assoc :to to))))
+                m)))
+          projection
+          target-relations))))
   nil
   (mark-removed [_] nil)
   (mark-added [_] nil)
   (mark-diff [_ _] nil)
+  ; (suppress [_ _])
   (project [_ that] (when that (mark-added that))))

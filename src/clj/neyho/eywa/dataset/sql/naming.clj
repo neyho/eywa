@@ -57,7 +57,6 @@
                 (comp str/lower-case #(re-find #"\w{2,4}" %))
                 (str/split name #"[\_\-\s]"))))]
     (fn [relation]
-      (def relation relation)
       (let [{inverted? :dataset.relation/inverted?} (meta relation)
             ;;
             {id :euuid
