@@ -877,7 +877,7 @@
                                    :modified_on nil}
                       :args {:_where {:deployed {:_boolean :TRUE}}
                              :_limit 1
-                             :_order_by {:modified_on :desc}}}]})
+                             :_order_by {:modified_on :asc}}}]})
         ;; Extract versions sorted by modification time
         versions (sort-by
                    :modified_on
@@ -970,103 +970,103 @@
                   {versions :versions
                    name :name
                    :keys [euuid]}]
-    (assert (not-empty versions) "Dataset versions have to be specified! What versions are destroyed?")
-    (assert (or name euuid) "Specify dataset name or euuid!")
-    (let [version-uuids (set (map :euuid versions))
-          ;; Get model WITH CLAIMS so we can check exclusivity
-          ;; MUST use last-deployed-model (not fallback) because we need claims
-          global (dataset/deployed-model)
+    (when-not (empty? versions)
+      (assert (or name euuid) "Specify dataset name or euuid!")
+      (let [version-uuids (set (map :euuid versions))
+            ;; Get model WITH CLAIMS so we can check exclusivity
+            ;; MUST use last-deployed-model (not fallback) because we need claims
+            global (dataset/deployed-model)
 
-          ;; 1. Find entities/relations exclusive to this dataset (before removing claims)
-          exclusive-entities (core/find-exclusive-entities global version-uuids)
-          exclusive-relations (core/find-exclusive-relations global version-uuids)
+            ;; 1. Find entities/relations exclusive to this dataset (before removing claims)
+            exclusive-entities (core/find-exclusive-entities global version-uuids)
+            exclusive-relations (core/find-exclusive-relations global version-uuids)
 
-          ;; 2. Remove claims from deleted versions
-          model-with-claims (core/remove-claims global version-uuids)
+            ;; 2. Remove claims from deleted versions
+            model-with-claims (core/remove-claims global version-uuids)
 
-          ;; 3. Convert claims to :active flags for persistence
-          updated-model (-> model-with-claims
-                            (assoc :version 1)
-                            (as-> m
-                                  (reduce
-                                    (fn [m e]
-                                      (core/remove-entity m e))
-                                    m
-                                    exclusive-entities)
-                              (reduce
-                                (fn [m r]
-                                  (core/remove-relation m r))
-                                m
-                                exclusive-relations)))]
-      ; (def updated-model updated-model)
-      ; (def model-with-claims model-with-claims)
-      ; (def versions versions)
-      ; (def version-uuids (set (map :euuid versions)))
-      ; (def global global)
-      ; (def euuid euuid)
-      ; (def exclusive-entities exclusive-entities)
-      ; (def exclusive-relations exclusive-relations)
-      ; (def euuid euuid)
-      ; (throw (Exception. "H"))
+            ;; 3. Convert claims to :active flags for persistence
+            updated-model (-> model-with-claims
+                              (assoc :version 1)
+                              (as-> m
+                                    (reduce
+                                      (fn [m e]
+                                        (core/remove-entity m e))
+                                      m
+                                      exclusive-entities)
+                                (reduce
+                                  (fn [m r]
+                                    (core/remove-relation m r))
+                                  m
+                                  exclusive-relations)))]
+        ; (def updated-model updated-model)
+        ; (def model-with-claims model-with-claims)
+        ; (def versions versions)
+        ; (def version-uuids (set (map :euuid versions)))
+        ; (def global global)
+        ; (def euuid euuid)
+        ; (def exclusive-entities exclusive-entities)
+        ; (def exclusive-relations exclusive-relations)
+        ; (def euuid euuid)
+        ; (throw (Exception. "H"))
 
-      ;; 4. Unmount ONLY exclusive entities/relations
-      (when (or (not-empty exclusive-entities) (not-empty exclusive-relations))
-        (log/infof "Pruning %d exclusive entities and %d relations from dataset %s"
-                   (count exclusive-entities) (count exclusive-relations) name)
-        (with-open [con (jdbc/get-connection (:datasource *db*))]
+        ;; 4. Unmount ONLY exclusive entities/relations
+        (when (or (not-empty exclusive-entities) (not-empty exclusive-relations))
+          (log/infof "Pruning %d exclusive entities and %d relations from dataset %s"
+                     (count exclusive-entities) (count exclusive-relations) name)
+          (with-open [con (jdbc/get-connection (:datasource *db*))]
             ;; Drop relation tables
-          (doseq [relation exclusive-relations
-                  :let [{:keys [from to]
-                         :as relation} (core/get-relation global (:euuid relation))
-                        sql (format "drop table if exists \"%s\"" (relation->table-name relation))]]
-            (try
-              (execute-one! con [sql])
-              (log/tracef
-                "Removing relation from %s to %s\n%s"
-                (:name from)
-                (:name to)
-                sql)
-              (catch Throwable e
-                (log/errorf e "Couldn't remove table %s" (relation->table-name relation)))))
-            ;; Drop entity tables
-          (doseq [entity exclusive-entities
-                  :let [entity (core/get-entity global (:euuid entity))]
-                  :when (some? entity)]
-            (try
-              (let [sql (format "drop table if exists \"%s\"" (entity->table-name entity))
-                    enums-sql (drop-entity-enums-ddl entity)]
-                (log/tracef "Removing entity %s\n%s" (:name entity) sql)
+            (doseq [relation exclusive-relations
+                    :let [{:keys [from to]
+                           :as relation} (core/get-relation global (:euuid relation))
+                          sql (format "drop table if exists \"%s\"" (relation->table-name relation))]]
+              (try
                 (execute-one! con [sql])
-                ;; Delete metadata for this entity
-                (when (not-empty enums-sql)
-                  (log/trace "Removing %s enum types: %s" (:name entity) enums-sql)
-                  (execute-one! con [enums-sql])))
-              (catch Throwable e
-                (log/errorf e "Couldn't remove table %s" (entity->table-name entity)))))))
+                (log/tracef
+                  "Removing relation from %s to %s\n%s"
+                  (:name from)
+                  (:name to)
+                  sql)
+                (catch Throwable e
+                  (log/errorf e "Couldn't remove table %s" (relation->table-name relation)))))
+            ;; Drop entity tables
+            (doseq [entity exclusive-entities
+                    :let [entity (core/get-entity global (:euuid entity))]
+                    :when (some? entity)]
+              (try
+                (let [sql (format "drop table if exists \"%s\"" (entity->table-name entity))
+                      enums-sql (drop-entity-enums-ddl entity)]
+                  (log/tracef "Removing entity %s\n%s" (:name entity) sql)
+                  (execute-one! con [sql])
+                  ;; Delete metadata for this entity
+                  (when (not-empty enums-sql)
+                    (log/trace "Removing %s enum types: %s" (:name entity) enums-sql)
+                    (execute-one! con [enums-sql])))
+                (catch Throwable e
+                  (log/errorf e "Couldn't remove table %s" (entity->table-name entity)))))))
 
-      ;; 5. Delete version records
-      (doseq [{:keys [euuid]
-               version-name :name} (reverse versions)]
-        (log/infof "Destroying dataset version %s@%s" name version-name)
-        (delete-entity this du/dataset-version {:euuid euuid}))
+        ;; 5. Delete version records
+        (doseq [{:keys [euuid]
+                 version-name :name} (reverse versions)]
+          (log/infof "Destroying dataset version %s@%s" name version-name)
+          (delete-entity this du/dataset-version {:euuid euuid}))
 
-      ;; 6. Delete dataset itself if it has 0 dataset versions now
-      (let [{:keys [versions euuid]}
-            (dataset/get-entity
-              du/dataset
-              (if euuid
-                {:euuid euuid}
-                {:name name})
-              {:euuid nil
-               :versions [{:selections nil}]})]
-        (when (empty? versions)
-          (dataset/delete-entity du/dataset {:euuid euuid})))
+        ;; 6. Delete dataset itself if it has 0 dataset versions now
+        (let [{:keys [versions euuid]}
+              (dataset/get-entity
+                du/dataset
+                (if euuid
+                  {:euuid euuid}
+                  {:name name})
+                {:euuid nil
+                 :versions [{:selections nil}]})]
+          (when (empty? versions)
+            (dataset/delete-entity du/dataset {:euuid euuid})))
 
-      ;; 7. Save global updated model and reload
-      (dataset/save-model updated-model)
-      (query/deploy-schema (model->schema updated-model))
-      (core/add-to-deploy-history this updated-model)
-      (core/reload this)))
+        ;; 7. Save global updated model and reload
+        (dataset/save-model updated-model)
+        (query/deploy-schema (model->schema updated-model))
+        (core/add-to-deploy-history this updated-model)
+        (core/reload this))))
   (core/get-model
     [_]
     (dataset/deployed-model))

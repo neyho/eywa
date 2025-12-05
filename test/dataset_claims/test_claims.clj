@@ -1,10 +1,13 @@
-(ns dataset-claims.test-claims-system
+(ns dataset-claims.test-claims
   (:require
-    [clojure.pprint :refer [pprint]]
-    [next.jdbc :as jdbc]
-    [neyho.eywa.dataset :as dataset]
-    [neyho.eywa.dataset.core :as core]
-    [neyho.eywa.db :refer [*db*]]))
+   [clojure.pprint :refer [pprint]]
+   [clojure.string :as str]
+   [next.jdbc :as jdbc]
+   [neyho.eywa.dataset :as dataset]
+   [neyho.eywa.dataset.core :as core]
+   [neyho.eywa.dataset.uuids :as du]
+   [neyho.eywa.db :refer [*db*]]
+   [neyho.eywa.lacinia :as lacinia]))
 
 (println "\n====================================")
 (println "DATASET CLAIMS SYSTEM TEST")
@@ -41,14 +44,14 @@
 
         ;; Add relation
         model-with-relations (core/add-relation
-                               model-with-entities
-                               (core/map->ERDRelation
-                                 {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
-                                  :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                  :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
-                                  :from-label "product"
-                                  :to-label "category"
-                                  :cardinality "m2o"}))]
+                              model-with-entities
+                              (core/map->ERDRelation
+                               {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
+                                :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+                                :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
+                                :from-label "product"
+                                :to-label "category"
+                                :cardinality "m2o"}))]
 
     {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000001"
      :name "Test Dataset A"
@@ -90,14 +93,14 @@
 
         ;; Add relation
         model-with-relations (core/add-relation
-                               model-with-entities
-                               (core/map->ERDRelation
-                                 {:euuid #uuid "bbbbbbbb-2222-0000-0000-000000000001"
-                                  :from #uuid "bbbbbbbb-1111-0000-0000-000000000003"
-                                  :to #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                  :from-label "order"
-                                  :to-label "product"
-                                  :cardinality "m2m"}))]
+                              model-with-entities
+                              (core/map->ERDRelation
+                               {:euuid #uuid "bbbbbbbb-2222-0000-0000-000000000001"
+                                :from #uuid "bbbbbbbb-1111-0000-0000-000000000003"
+                                :to #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+                                :from-label "order"
+                                :to-label "product"
+                                :cardinality "m2m"}))]
 
     {:euuid #uuid "bbbbbbbb-0000-0000-0000-000000000001"
      :name "Test Dataset B"
@@ -223,14 +226,14 @@
                                 (core/add-entity category-entity))
         ;; Share the SAME relation UUID as Dataset A
         model-with-relations (core/add-relation
-                               model-with-entities
-                               (core/map->ERDRelation
-                                 {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
-                                  :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                  :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
-                                  :from-label "product"
-                                  :to-label "category"
-                                  :cardinality "m2o"}))]
+                              model-with-entities
+                              (core/map->ERDRelation
+                               {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
+                                :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+                                :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
+                                :from-label "product"
+                                :to-label "category"
+                                :cardinality "m2o"}))]
     {:euuid #uuid "eeeeeeee-0000-0000-0000-000000000001"
      :name "Test Dataset E"
      :version "1.0.0"
@@ -262,10 +265,42 @@
   (println "\n--- PostgreSQL Tables ---")
   (with-open [con (jdbc/get-connection (:datasource neyho.eywa.db/*db*))]
     (let [tables (jdbc/execute!
-                   con
-                   ["SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename NOT LIKE '%modeling%' AND tablename NOT LIKE '%deploy%' ORDER BY tablename"])]
+                  con
+                  ["SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename NOT LIKE '%modeling%' AND tablename NOT LIKE '%deploy%' ORDER BY tablename"])]
       (doseq [table tables]
         (println (format "  - %s" (:pg_tables/tablename table)))))))
+
+(defn get-table-columns [table-name]
+  "Returns set of column names for a table"
+  (with-open [con (jdbc/get-connection (:datasource neyho.eywa.db/*db*))]
+    (let [columns (jdbc/execute!
+                   con
+                   ["SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ?" table-name])]
+      (set (map :information_schema.columns/column_name columns)))))
+
+(defn table-exists? [table-name]
+  "Check if a table exists in the database"
+  (with-open [con (jdbc/get-connection (:datasource neyho.eywa.db/*db*))]
+    (let [result (jdbc/execute!
+                  con
+                  ["SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = ?)" table-name])]
+      (:exists (first result)))))
+
+(defn get-graphql-types []
+  "Returns set of GraphQL object type names from the schema"
+  (try
+    (when-let [schema @lacinia/compiled]
+      (let [type-keys (keys schema)
+            ;; Filter out special GraphQL keys (:Query, :Mutation, etc) and introspection types
+            entity-types (filter
+                          #(and (keyword? %)
+                                (not (#{:Query :Mutation :Subscription} %))
+                                (not (str/starts-with? (name %) "__")))
+                          type-keys)]
+        (set (map name entity-types))))
+    (catch Exception e
+      (println (format "Warning: Could not get GraphQL schema: %s" (.getMessage e)))
+      #{})))
 
 ;; Test result tracking
 (def test-results (atom []))
@@ -349,10 +384,10 @@
     (println "\n4. Delete Dataset A")
     (let [dataset-a-uuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"
           dataset (dataset/get-entity
-                    neyho.eywa.dataset.uuids/dataset
-                    {:euuid dataset-a-uuid}
-                    {:versions [{:selections {:euuid nil
-                                              :name nil}}]})]
+                   neyho.eywa.dataset.uuids/dataset
+                   {:euuid dataset-a-uuid}
+                   {:versions [{:selections {:euuid nil
+                                             :name nil}}]})]
       (core/destroy! *db* dataset))
 
     (println "\n5. Verify Product still exists, Category deleted")
@@ -378,10 +413,10 @@
     (println "\n4. Delete Dataset A")
     (let [dataset-a-uuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"
           dataset (dataset/get-entity
-                    neyho.eywa.dataset.uuids/dataset
-                    {:euuid dataset-a-uuid}
-                    {:versions [{:selections {:euuid nil
-                                              :name nil}}]})]
+                   neyho.eywa.dataset.uuids/dataset
+                   {:euuid dataset-a-uuid}
+                   {:versions [{:selections {:euuid nil
+                                             :name nil}}]})]
       (core/destroy! *db* dataset))
 
     (println "\n5. Verify Product still exists, Category deleted")
@@ -414,10 +449,10 @@
     (println "\n2. Delete Dataset A (exclusive entities should be dropped)")
     (let [dataset-a-uuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"
           dataset (dataset/get-entity
-                    neyho.eywa.dataset.uuids/dataset
-                    {:euuid dataset-a-uuid}
-                    {:versions [{:selections {:euuid nil
-                                              :name nil}}]})]
+                   neyho.eywa.dataset.uuids/dataset
+                   {:euuid dataset-a-uuid}
+                   {:versions [{:selections {:euuid nil
+                                             :name nil}}]})]
       (core/destroy! *db* dataset))
 
     (let [model-after-delete (dataset/deployed-model)
@@ -473,10 +508,10 @@
     (println "\n4. Delete Dataset A")
     (let [dataset-a-uuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"
           dataset (dataset/get-entity
-                    neyho.eywa.dataset.uuids/dataset
-                    {:euuid dataset-a-uuid}
-                    {:versions [{:selections {:euuid nil
-                                              :name nil}}]})]
+                   neyho.eywa.dataset.uuids/dataset
+                   {:euuid dataset-a-uuid}
+                   {:versions [{:selections {:euuid nil
+                                             :name nil}}]})]
       (core/destroy! *db* dataset))
 
     (println "\n5. Verify Product and Category survive, exclusive relation deleted")
@@ -514,15 +549,152 @@
       (assert-true test-name (contains? (:claimed-by item) dataset-a-v2-uuid) "Should have v2 claim")
       (assert-true test-name (not (contains? (:claimed-by item) dataset-a-v1-uuid)) "Should NOT have v1 claim (replaced)"))
     (core/destroy! *db* (dataset/get-entity
-                          neyho.eywa.dataset.uuids/dataset
-                          {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
-                          {:euuid nil
-                           :name nil
-                           :versions [{:selections
-                                       {:euuid nil}}]}))
+                         neyho.eywa.dataset.uuids/dataset
+                         {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
+                         {:euuid nil
+                          :name nil
+                          :versions [{:selections
+                                      {:euuid nil}}]}))
     nil))
 
+;; Datasets for lifecycle testing (Scenario 8)
+(defn create-lifecycle-v1 []
+  "Initial version with TestUser and TestRole entities"
+  (let [model (core/map->ERDModel {})
+        user-entity (-> (core/map->ERDEntity {:euuid #uuid "ffffffff-1111-0000-0000-000000000001"
+                                              :name "TestUser"})
+                        (core/add-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000001"
+                                             :name "Email"
+                                             :type "string"
+                                             :constraint "mandatory"}))
+        role-entity (-> (core/map->ERDEntity {:euuid #uuid "ffffffff-1111-0000-0000-000000000002"
+                                              :name "TestRole"})
+                        (core/add-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000002"
+                                             :name "Name"
+                                             :type "string"}))
+        model-with-entities (-> model
+                                (core/add-entity user-entity)
+                                (core/add-entity role-entity))]
+    {:euuid #uuid "ffffffff-0000-0000-0000-000000000001"
+     :name "Lifecycle Test v1"
+     :version "1.0.0"
+     :dataset {:euuid #uuid "ffffffff-0000-0000-0000-000000000000"
+               :name "LifecycleTest"}
+     :model model-with-entities}))
 
+(defn create-lifecycle-v2 []
+  "Add TestPermission entity and relation"
+  (let [model (core/map->ERDModel {})
+        user-entity (-> (core/map->ERDEntity {:euuid #uuid "ffffffff-1111-0000-0000-000000000001"
+                                              :name "TestUser"})
+                        (core/add-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000001"
+                                             :name "Email"
+                                             :type "string"}))
+        role-entity (-> (core/map->ERDEntity {:euuid #uuid "ffffffff-1111-0000-0000-000000000002"
+                                              :name "TestRole"})
+                        (core/add-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000002"
+                                             :name "Name"
+                                             :type "string"}))
+        permission-entity (-> (core/map->ERDEntity {:euuid #uuid "ffffffff-1111-0000-0000-000000000003"
+                                                    :name "TestPermission"})
+                              (core/add-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000003"
+                                                   :name "Code"
+                                                   :type "string"}))
+        model-with-entities (-> model
+                                (core/add-entity user-entity)
+                                (core/add-entity role-entity)
+                                (core/add-entity permission-entity))
+        model-with-relations (core/add-relation
+                              model-with-entities
+                              (core/map->ERDRelation
+                               {:euuid #uuid "ffffffff-2222-0000-0000-000000000001"
+                                :from #uuid "ffffffff-1111-0000-0000-000000000002"
+                                :to #uuid "ffffffff-1111-0000-0000-000000000003"
+                                :from-label "test_role"
+                                :to-label "test_permission"
+                                :cardinality "m2m"}))]
+    {:euuid #uuid "ffffffff-0000-0000-0000-000000000002"
+     :name "Lifecycle Test v2"
+     :version "2.0.0"
+     :dataset {:euuid #uuid "ffffffff-0000-0000-0000-000000000000"
+               :name "LifecycleTest"}
+     :model model-with-relations}))
+
+(defn create-lifecycle-v3 []
+  "Remove TestRole, keep TestUser and TestPermission"
+  (let [model (core/map->ERDModel {})
+        user-entity (-> (core/map->ERDEntity {:euuid #uuid "ffffffff-1111-0000-0000-000000000001"
+                                              :name "TestUser"})
+                        (core/add-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000001"
+                                             :name "Email"
+                                             :type "string"}))
+        permission-entity (-> (core/map->ERDEntity {:euuid #uuid "ffffffff-1111-0000-0000-000000000003"
+                                                    :name "TestPermission"})
+                              (core/add-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000003"
+                                                   :name "Code"
+                                                   :type "string"}))
+        model-with-entities (-> model
+                                (core/add-entity user-entity)
+                                (core/add-entity permission-entity))]
+    {:euuid #uuid "ffffffff-0000-0000-0000-000000000003"
+     :name "Lifecycle Test v3"
+     :version "3.0.0"
+     :dataset {:euuid #uuid "ffffffff-0000-0000-0000-000000000000"
+               :name "LifecycleTest"}
+     :model model-with-entities}))
+
+(defn scenario-8-iterative-lifecycle []
+  (let [test-name "Scenario 8"]
+    (println "\n=== Phase 1: Initial Deployment ===")
+    (println "1. Deploy v1 (TestUser, TestRole)")
+    (core/deploy! *db* (create-lifecycle-v1))
+
+    (let [model (dataset/deployed-model)]
+      (assert-true test-name (table-exists? "testuser") "TestUser table should exist")
+      (assert-true test-name (table-exists? "testrole") "TestRole table should exist")
+      (assert-true test-name (contains? (get-graphql-types) "TestUser") "GraphQL should have TestUser type")
+      (assert-true test-name (contains? (get-graphql-types) "TestRole") "GraphQL should have TestRole type"))
+
+    (println "\n=== Phase 2: Add Entity and Relation ===")
+    (println "2. Deploy v2 (TestUser, TestRole, TestPermission + relation)")
+    (core/deploy! *db* (create-lifecycle-v2))
+
+    (let [model (dataset/deployed-model)
+          user (get-in model [:entities #uuid "ffffffff-1111-0000-0000-000000000001"])
+          role (get-in model [:entities #uuid "ffffffff-1111-0000-0000-000000000002"])
+          permission (get-in model [:entities #uuid "ffffffff-1111-0000-0000-000000000003"])
+          relation (get-in model [:relations #uuid "ffffffff-2222-0000-0000-000000000001"])]
+      (assert-true test-name (table-exists? "testpermission") "TestPermission table should exist")
+      (assert-true test-name (:active permission) "TestPermission should be active")
+      (assert-true test-name (:active relation) "TestRole->TestPermission relation should be active")
+      (assert-equals test-name 2 (count (:claimed-by user)) "TestUser should have 2 claims (v1 + v2)")
+      (assert-equals test-name 2 (count (:claimed-by role)) "TestRole should have 2 claims (v1 + v2)")
+      (assert-true test-name (contains? (get-graphql-types) "TestPermission") "GraphQL should have TestPermission type"))
+
+    (println "\n=== Phase 3: Remove Entity ===")
+    (println "3. Deploy v3 (TestUser, TestPermission - removed TestRole)")
+    (core/deploy! *db* (create-lifecycle-v3))
+
+    (let [model (dataset/deployed-model)
+          user (get-in model [:entities #uuid "ffffffff-1111-0000-0000-000000000001"])
+          role (get-in model [:entities #uuid "ffffffff-1111-0000-0000-000000000002"])
+          permission (get-in model [:entities #uuid "ffffffff-1111-0000-0000-000000000003"])
+          relation (get-in model [:relations #uuid "ffffffff-2222-0000-0000-000000000001"])]
+      (assert-true test-name (not (:active role)) "TestRole should be inactive (not in current version v3)")
+      (assert-true test-name (not (:active relation)) "TestRole->TestPermission relation should be inactive")
+      (assert-true test-name (table-exists? "testrole") "TestRole table should REMAIN (for rollback to v1/v2)")
+      (assert-true test-name (:active user) "TestUser should still be active")
+      (assert-true test-name (:active permission) "TestPermission should still be active")
+      (assert-equals test-name 3 (count (:claimed-by user)) "TestUser should have 3 claims (v1 + v2 + v3)")
+      (assert-equals test-name 2 (count (:claimed-by role)) "TestRole should still have 2 claims (v1 + v2)")
+      (assert-true test-name (not (contains? (get-graphql-types) "TestRole")) "GraphQL should NOT have TestRole type")
+      (assert-true test-name (contains? (get-graphql-types) "TestUser") "GraphQL should still have TestUser type"))
+
+    (println "\n=== Phase 4: Verify Database Schema ===")
+    (let [user-columns (get-table-columns "testuser")
+          permission-columns (get-table-columns "testpermission")]
+      (assert-true test-name (contains? user-columns "email") "TestUser table should have email column")
+      (assert-true test-name (contains? permission-columns "code") "TestPermission table should have code column"))))
 
 (defn cleanup []
   (println "\n\nCLEANUP")
@@ -532,10 +704,10 @@
     ;; Delete Dataset A
     (try
       (let [dataset (dataset/get-entity
-                      neyho.eywa.dataset.uuids/dataset
-                      {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
-                      {:versions [{:selections {:euuid nil
-                                                :name nil}}]})]
+                     neyho.eywa.dataset.uuids/dataset
+                     {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
+                     {:versions [{:selections {:euuid nil
+                                               :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset A")))
@@ -545,10 +717,10 @@
     ;; Delete Dataset B
     (try
       (let [dataset (dataset/get-entity
-                      neyho.eywa.dataset.uuids/dataset
-                      {:euuid #uuid "bbbbbbbb-0000-0000-0000-000000000000"}
-                      {:versions [{:selections {:euuid nil
-                                                :name nil}}]})]
+                     neyho.eywa.dataset.uuids/dataset
+                     {:euuid #uuid "bbbbbbbb-0000-0000-0000-000000000000"}
+                     {:versions [{:selections {:euuid nil
+                                               :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset B")))
@@ -558,10 +730,10 @@
     ;; Delete Dataset C
     (try
       (let [dataset (dataset/get-entity
-                      neyho.eywa.dataset.uuids/dataset
-                      {:euuid #uuid "cccccccc-0000-0000-0000-000000000000"}
-                      {:versions [{:selections {:euuid nil
-                                                :name nil}}]})]
+                     neyho.eywa.dataset.uuids/dataset
+                     {:euuid #uuid "cccccccc-0000-0000-0000-000000000000"}
+                     {:versions [{:selections {:euuid nil
+                                               :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset C")))
@@ -571,10 +743,10 @@
     ;; Delete Dataset D
     (try
       (let [dataset (dataset/get-entity
-                      neyho.eywa.dataset.uuids/dataset
-                      {:euuid #uuid "dddddddd-0000-0000-0000-000000000000"}
-                      {:versions [{:selections {:euuid nil
-                                                :name nil}}]})]
+                     neyho.eywa.dataset.uuids/dataset
+                     {:euuid #uuid "dddddddd-0000-0000-0000-000000000000"}
+                     {:versions [{:selections {:euuid nil
+                                               :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset D")))
@@ -584,15 +756,28 @@
     ;; Delete Dataset E
     (try
       (let [dataset (dataset/get-entity
-                      neyho.eywa.dataset.uuids/dataset
-                      {:euuid #uuid "eeeeeeee-0000-0000-0000-000000000000"}
-                      {:versions [{:selections {:euuid nil
-                                                :name nil}}]})]
+                     neyho.eywa.dataset.uuids/dataset
+                     {:euuid #uuid "eeeeeeee-0000-0000-0000-000000000000"}
+                     {:versions [{:selections {:euuid nil
+                                               :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset E")))
       (catch Exception e
         (println (format "  Dataset E: %s" (.getMessage e)))))
+
+    ;; Delete Lifecycle Dataset
+    (try
+      (let [dataset (dataset/get-entity
+                     neyho.eywa.dataset.uuids/dataset
+                     {:euuid #uuid "ffffffff-0000-0000-0000-000000000000"}
+                     {:versions [{:selections {:euuid nil
+                                               :name nil}}]})]
+        (when dataset
+          (core/destroy! *db* dataset)
+          (println "  ✓ Deleted Lifecycle Dataset")))
+      (catch Exception e
+        (println (format "  Lifecycle Dataset: %s" (.getMessage e)))))
 
     (println "\n✓ Cleanup complete")
     (catch Exception e
@@ -627,6 +812,8 @@
   (test-scenario "Scenario 6: Entity Renaming" scenario-6-entity-renaming)
   (cleanup)
 
+  (test-scenario "Scenario 8: Iterative Lifecycle & Integration" scenario-8-iterative-lifecycle)
+  (cleanup)
 
   ;; Print summary
   (let [results @test-results
