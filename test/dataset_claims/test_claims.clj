@@ -276,7 +276,7 @@
     (let [columns (jdbc/execute!
                    con
                    ["SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ?" table-name])]
-      (set (map :information_schema.columns/column_name columns)))))
+      (set (map :columns/column_name columns)))))
 
 (defn table-exists? [table-name]
   "Check if a table exists in the database"
@@ -547,7 +547,7 @@
       (assert-equals test-name "Item" (:name item) "Entity should be renamed to 'Item'")
       (assert-true test-name (:active item) "Entity should still be active")
       (assert-true test-name (contains? (:claimed-by item) dataset-a-v2-uuid) "Should have v2 claim")
-      (assert-true test-name (not (contains? (:claimed-by item) dataset-a-v1-uuid)) "Should NOT have v1 claim (replaced)"))
+      (assert-true test-name (contains? (:claimed-by item) dataset-a-v1-uuid) "Should have v1 claim (preserved for rollback)"))
     (core/destroy! *db* (dataset/get-entity
                          neyho.eywa.dataset.uuids/dataset
                          {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
@@ -555,6 +555,152 @@
                           :name nil
                           :versions [{:selections
                                       {:euuid nil}}]}))
+    nil))
+
+;; Helper datasets for recall testing
+(defn create-order-v1 []
+  "Create Order dataset v1 with just Order entity"
+  (let [model (core/map->ERDModel {})
+        order-entity (-> (core/map->ERDEntity {:euuid #uuid "eeeeeeee-1111-0000-0000-000000000001"
+                                               :name "Order"})
+                         (core/add-attribute {:euuid #uuid "eeeeeeee-1111-1111-0000-000000000001"
+                                              :name "OrderNumber"
+                                              :type "string"
+                                              :constraint "mandatory"}))
+        model-with-entity (core/add-entity model order-entity)]
+    {:euuid #uuid "eeeeeeee-0000-0000-0000-000000000001"
+     :name "Order Dataset v1"
+     :dataset {:euuid #uuid "eeeeeeee-0000-0000-0000-000000000000"
+               :name "Order Dataset"}
+     :model model-with-entity}))
+
+(defn create-order-v2 []
+  "Create Order dataset v2 with Order + Shipment entities"
+  (let [model (core/map->ERDModel {})
+        ;; Re-include Order entity from v1
+        order-entity (-> (core/map->ERDEntity {:euuid #uuid "eeeeeeee-1111-0000-0000-000000000001"
+                                               :name "Order"})
+                         (core/add-attribute {:euuid #uuid "eeeeeeee-1111-1111-0000-000000000001"
+                                              :name "OrderNumber"
+                                              :type "string"
+                                              :constraint "mandatory"}))
+        ;; Add new Shipment entity
+        shipment-entity (-> (core/map->ERDEntity {:euuid #uuid "eeeeeeee-1111-0000-0000-000000000002"
+                                                  :name "Shipment"})
+                            (core/add-attribute {:euuid #uuid "eeeeeeee-1111-1111-0000-000000000003"
+                                                 :name "TrackingCode"
+                                                 :type "string"}))
+        model-with-entities (-> model
+                                (core/add-entity order-entity)
+                                (core/add-entity shipment-entity))]
+    {:euuid #uuid "eeeeeeee-0000-0000-0000-000000000002"
+     :name "Order Dataset v2"
+     :dataset {:euuid #uuid "eeeeeeee-0000-0000-0000-000000000000"
+               :name "Order Dataset"}
+     :model model-with-entities}))
+
+;; Recall test scenarios (Scenario 7)
+(defn scenario-7a-recall-only-version []
+  "Test recalling the only deployed version - should delete dataset entirely"
+  (let [test-name "Scenario 7a"]
+    (println "\n1. Deploy Dataset A v1 (only version)")
+    (let [version (create-test-dataset-a)]
+      (core/deploy! *db* version)
+
+      (println "\n2. Verify deployment successful")
+      (let [model (dataset/deployed-model)
+            product (core/get-entity model #uuid "aaaaaaaa-1111-0000-0000-000000000001")]
+        (assert-true test-name (:active product) "Product should be active after deployment")
+        (assert-true test-name (table-exists? "product") "Product table should exist"))
+
+      (println "\n3. Recall the only version")
+      (core/recall! *db* {:euuid (:euuid version)})
+
+      (println "\n4. Verify dataset deleted entirely")
+      (let [model (dataset/deployed-model)
+            product (core/get-entity model #uuid "aaaaaaaa-1111-0000-0000-000000000001")
+            category (core/get-entity model #uuid "aaaaaaaa-1111-0000-0000-000000000002")
+            dataset (try
+                      (dataset/get-entity
+                       neyho.eywa.dataset.uuids/dataset
+                       {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
+                       {:euuid nil})
+                      (catch Throwable _ nil))]
+        (assert-true test-name (nil? product) "Product should not exist in model after recall")
+        (assert-true test-name (nil? category) "Category should not exist in model after recall")
+        (assert-true test-name (not (table-exists? "product")) "Product table should be dropped")
+        (assert-true test-name (not (table-exists? "category")) "Category table should be dropped")
+        (assert-true test-name (nil? dataset) "Dataset itself should be deleted")))
+    nil))
+
+(defn scenario-7b-recall-most-recent []
+  "Test recalling most recent version - should rollback to previous version"
+  (let [test-name "Scenario 7b"]
+    (println "\n1. Deploy Dataset A v1 (Product with Name, Price)")
+    (let [v1 (create-test-dataset-a)]
+      (core/deploy! *db* v1)
+
+      (println "\n2. Deploy Dataset A v2 (renamed Product to Item, added Description)")
+      (let [v2 (create-test-dataset-a-v2)]
+        (core/deploy! *db* v2)
+
+        (println "\n3. Verify v2 is active (entity renamed to Item)")
+        (let [model-before (dataset/deployed-model)
+              item (core/get-entity model-before #uuid "aaaaaaaa-1111-0000-0000-000000000001")]
+          (assert-equals test-name "Item" (:name item) "Entity should be named 'Item' in v2")
+          (assert-true test-name (:active item) "Item should be active")
+          (assert-equals test-name 2 (count (:claimed-by item)) "Should have 2 claims (v1 + v2)"))
+
+        (println "\n4. Recall most recent version (v2)")
+        (core/recall! *db* {:euuid (:euuid v2)})
+
+        (println "\n5. Verify rolled back to v1 (entity reverted to Product)")
+        (let [model-after (dataset/deployed-model)
+              product (core/get-entity model-after #uuid "aaaaaaaa-1111-0000-0000-000000000001")]
+          (assert-equals test-name "Product" (:name product) "Entity should be reverted to 'Product' from v1")
+          (assert-true test-name (:active product) "Product should still be active")
+          (assert-equals test-name 1 (count (:claimed-by product)) "Should have 1 claim (only v1)")
+          (assert-true test-name (contains? (:claimed-by product) (:euuid v1)) "Should be claimed by v1"))
+
+        ;; Cleanup
+        (core/destroy! *db* {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"})))
+    nil))
+
+(defn scenario-7c-recall-older-version []
+  "Test recalling an older version - should just remove it without affecting current"
+  (let [test-name "Scenario 7c"]
+    (println "\n1. Deploy Order Dataset v1 (Order entity)")
+    (let [v1 (create-order-v1)]
+      (core/deploy! *db* v1)
+
+      (println "\n2. Deploy Order Dataset v2 (Order + Shipment)")
+      (let [v2 (create-order-v2)]
+        (core/deploy! *db* v2)
+
+        (println "\n3. Verify both entities active")
+        (let [model-before (dataset/deployed-model)
+              order (core/get-entity model-before #uuid "eeeeeeee-1111-0000-0000-000000000001")
+              shipment (core/get-entity model-before #uuid "eeeeeeee-1111-0000-0000-000000000002")]
+          (assert-true test-name (:active order) "Order should be active")
+          (assert-true test-name (:active shipment) "Shipment should be active")
+          (assert-equals test-name 2 (count (:claimed-by order)) "Order claimed by v1 + v2"))
+
+        (println "\n4. Recall older version (v1)")
+        (core/recall! *db* {:euuid (:euuid v1)})
+
+        (println "\n5. Verify v2 remains active, v1 claim removed")
+        (let [model-after (dataset/deployed-model)
+              order (core/get-entity model-after #uuid "eeeeeeee-1111-0000-0000-000000000001")
+              shipment (core/get-entity model-after #uuid "eeeeeeee-1111-0000-0000-000000000002")]
+          (assert-true test-name (:active order) "Order should still be active (in v2)")
+          (assert-true test-name (:active shipment) "Shipment should still be active (in v2)")
+          (assert-equals test-name 1 (count (:claimed-by order)) "Order should have 1 claim (only v2)")
+          (assert-true test-name (contains? (:claimed-by order) (:euuid v2)) "Order claimed by v2")
+          (assert-true test-name (table-exists? "order") "Order table should still exist")
+          (assert-true test-name (table-exists? "shipment") "Shipment table should still exist"))
+
+        ;; Cleanup
+        (core/destroy! *db* {:euuid #uuid "eeeeeeee-0000-0000-0000-000000000000"})))
     nil))
 
 ;; Datasets for lifecycle testing (Scenario 8)
@@ -810,6 +956,15 @@
   (cleanup)
 
   (test-scenario "Scenario 6: Entity Renaming" scenario-6-entity-renaming)
+  (cleanup)
+
+  (test-scenario "Scenario 7a: Recall Only Version" scenario-7a-recall-only-version)
+  (cleanup)
+
+  (test-scenario "Scenario 7b: Recall Most Recent (Rollback)" scenario-7b-recall-most-recent)
+  (cleanup)
+
+  (test-scenario "Scenario 7c: Recall Older Version" scenario-7c-recall-older-version)
   (cleanup)
 
   (test-scenario "Scenario 8: Iterative Lifecycle & Integration" scenario-8-iterative-lifecycle)

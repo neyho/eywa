@@ -238,9 +238,15 @@
   (deploy!
     [this version]
     "Deploys dataset version")
+  (recall!
+    [this version]
+    "Deletes a specific dataset version by {:euuid version-uuid}. Only works on deployed versions.
+     If it's the only deployed version, cleans up and returns.
+     If it's the most recent (but not only), rolls back to previous version.
+     Otherwise just deletes it.")
   (destroy!
     [this dataset]
-    "Removes all dataset versions and all dataset data. Affects DB as well. All is gone")
+    "Nuclear delete: removes ALL dataset versions and all dataset data. Affects DB as well. All is gone")
   (get-model
     [this]
     "Returns all entities and relations for given account")
@@ -513,13 +519,10 @@
     (filter
      (fn [entity]
        (let [claims (get entity :claimed-by #{})]
+          ;; Skip entities without claims (legacy system entities)
           ;; Exclusive if all claims are within version-uuids
-         (when (empty? claims)
-           (throw
-            (ex-info
-             "Entity doesn't have claims! All entities should have claims"
-             entity)))
-         (empty? (clojure.set/difference claims version-set))))
+         (and (not-empty claims)
+              (empty? (clojure.set/difference claims version-set)))))
      (get-entities model))))
 
 (defn find-exclusive-relations
@@ -529,42 +532,74 @@
     (filter
      (fn [relation]
        (let [claims (get relation :claimed-by #{})]
+          ;; Skip relations without claims (legacy system relations)
           ;; Exclusive if all claims are within version-uuids
-         (when (empty? claims)
-           (throw
-            (ex-info
-             "Relation doesn't have claims! All relations should have claims"
-             relation)))
-         (empty? (clojure.set/difference claims version-set))))
+         (and (not-empty claims)
+              (empty? (clojure.set/difference claims version-set)))))
      (get-relations model))))
 
 (defn ensure-active-flags
-  "Takes a model with :claimed-by sets and returns a model with :active flags (no :claimed-by).
+  "Takes a model with :claimed-by sets and returns a model with :active flags AND :claimed-by.
    This is a pure function - it works on the model structure only, no DB access.
-   The :active flag is derived from :claimed-by, then :claimed-by is removed."
-  [model]
-  (let [;; Process entities: set :active from :claimed-by, then remove :claimed-by
+   The :active flag is true ONLY if the entity/relation is claimed by the current-version-uuid.
+   If current-version-uuid is nil, active is true for any entity with claims (legacy behavior).
+   NOTE: Both :claimed-by and :active are preserved in the model."
+  ([model]
+   ;; Legacy: active if any claims (for backward compatibility)
+   (ensure-active-flags model nil))
+  ([model current-version-uuid]
+   (let [;; Process entities: set :active from :claimed-by, KEEP :claimed-by
+         updated-entities
+         (reduce-kv
+          (fn [entities entity-uuid entity]
+            (let [claims (get entity :claimed-by #{})
+                  active? (if current-version-uuid
+                            (contains? claims current-version-uuid)
+                            (boolean (not-empty claims)))]
+              (assoc entities entity-uuid
+                     (assoc entity :active active?))))
+          {}
+          (:entities model))
+         ;; Process relations: set :active from :claimed-by, KEEP :claimed-by
+         updated-relations
+         (reduce-kv
+          (fn [relations relation-uuid relation]
+            (let [claims (get relation :claimed-by #{})
+                  active? (if current-version-uuid
+                            (contains? claims current-version-uuid)
+                            (boolean (not-empty claims)))]
+              (assoc relations relation-uuid
+                     (assoc relation :active active?))))
+          {}
+          (:relations model))]
+     (assoc model
+            :entities updated-entities
+            :relations updated-relations))))
+
+(defn compute-active-flags
+  "Sets :active flags based on intersection of :claimed-by with latest version UUIDs.
+   An entity/relation is :active true ONLY if its :claimed-by intersects with latest-version-uuids.
+   Does NOT modify :claimed-by."
+  [model latest-version-uuids]
+  (let [latest-versions (set latest-version-uuids)
+        ;; Update entity active flags
         updated-entities
         (reduce-kv
          (fn [entities entity-uuid entity]
-           (let [claims (get entity :claimed-by #{})
-                 active? (boolean (not-empty claims))]
+           (let [claimed-by (get entity :claimed-by #{})
+                 active? (boolean (some latest-versions claimed-by))]
              (assoc entities entity-uuid
-                    (-> entity
-                        (assoc :active active?)
-                        (dissoc :claimed-by)))))
+                    (assoc entity :active active?))))
          {}
          (:entities model))
-        ;; Process relations: set :active from :claimed-by, then remove :claimed-by
+        ;; Update relation active flags
         updated-relations
         (reduce-kv
          (fn [relations relation-uuid relation]
-           (let [claims (get relation :claimed-by #{})
-                 active? (boolean (not-empty claims))]
+           (let [claimed-by (get relation :claimed-by #{})
+                 active? (boolean (some latest-versions claimed-by))]
              (assoc relations relation-uuid
-                    (-> relation
-                        (assoc :active active?)
-                        (dissoc :claimed-by)))))
+                    (assoc relation :active active?))))
          {}
          (:relations model))]
     (assoc model

@@ -1,26 +1,26 @@
 (ns neyho.eywa.iam.oauth.store
   (:require
-   [vura.core :as vura]
-   [patcho.patch :as patch]
-   [clojure.pprint :refer [pprint]]
-   [clojure.tools.logging :as log]
-   [clojure.string :as str]
-   [clojure.core.async :as async]
-   [clojure.java.io :as io]
-   [buddy.sign.jwt :as jwt]
-   [environ.core :refer [env]]
-   [neyho.eywa.iam :as iam]
-   [neyho.eywa.transit :refer [<-transit]]
-   [neyho.eywa.iam.oauth.core :as core]
-   [neyho.eywa.iam.oauth.token :as token]
-   [neyho.eywa.dataset.encryption :as encryption]
-   [neyho.eywa.dataset :as dataset])
+    [buddy.sign.jwt :as jwt]
+    [clojure.core.async :as async]
+    [clojure.java.io :as io]
+    [clojure.pprint :refer [pprint]]
+    [clojure.string :as str]
+    [clojure.tools.logging :as log]
+    [environ.core :refer [env]]
+    [neyho.eywa.dataset :as dataset]
+    [neyho.eywa.dataset.encryption :as encryption]
+    [neyho.eywa.iam :as iam]
+    [neyho.eywa.iam.oauth.core :as core]
+    [neyho.eywa.iam.oauth.token :as token]
+    [neyho.eywa.transit :refer [<-transit]]
+    [patcho.patch :as patch]
+    [vura.core :as vura])
   (:import
-   [java.util Base64]
-   [java.security KeyFactory]
-   [java.security.spec
-    X509EncodedKeySpec
-    PKCS8EncodedKeySpec]))
+    [java.security KeyFactory]
+    [java.security.spec
+     X509EncodedKeySpec
+     PKCS8EncodedKeySpec]
+    [java.util Base64]))
 
 (def -client- #uuid "0757bd93-7abf-45b4-8437-2841283edcba")
 (def -session- #uuid "b2562198-0817-4508-a941-d898373298e5")
@@ -48,44 +48,45 @@
 (defn get-key-pairs
   []
   (map
-   (fn [kp]
-     (->
-      kp
-      (update :public decode-public-key)
-      (update :private decode-private-key)))
-   (dataset/search-entity
-    -key-pairs-
-    {:active {:_eq true}
-     :_order_by {:modified_on :desc}}
-    {:euuid nil
-     :modified_on nil
-     :kid nil
-     :public nil
-     :private nil})))
+    (fn [kp]
+      (->
+        kp
+        (update :public decode-public-key)
+        (update :private decode-private-key)))
+    (dataset/search-entity
+      -key-pairs-
+      {:active {:_eq true}
+       :_order_by {:modified_on :desc}}
+      {:euuid nil
+       :modified_on nil
+       :kid nil
+       :public nil
+       :private nil})))
 
 (defn on-key-pair-add
   [{{:keys [kid public private]} :key-pair}]
   (try
     (dataset/stack-entity
-     -key-pairs-
-     {:kid kid
-      :active true
-      :public (encode-rsa public)
-      :private (encode-rsa private)})
+      -key-pairs-
+      {:kid kid
+       :active true
+       :public (encode-rsa public)
+       :private (encode-rsa private)})
     (catch Throwable ex
       (log/error ex "[OAuth Store] Couldn't save RSA keypair. Check if encryption is enabled"))))
 
 (defn on-key-pair-remove
   [{{:keys [kid]} :key-pair}]
-  (dataset/stack-entity -key-pairs- {:kid kid :active false}))
+  (dataset/stack-entity -key-pairs- {:kid kid
+                                     :active false}))
 
 (defn on-token-revoke
   [{token-type :token/key
     token :token/data}]
   (dataset/stack-entity
-   (if (= token-type :access_token) -access- -refresh-)
-   {:value token
-    :revoked true}))
+    (if (= token-type :access_token) -access- -refresh-)
+    {:value token
+     :revoked true}))
 
 (defn on-tokens-grant
   [{{refresh-token :refresh_token
@@ -94,36 +95,36 @@
   (let [{:keys [kid]} (jwt/decode-header access-token)]
     (when access-token
       (dataset/stack-entity
-       -access-
-       {:value access-token
-        :session {:id session}
-        :expires-at (core/expires-at access-token)
-        :signed_by {:kid kid}}))
+        -access-
+        {:value access-token
+         :session {:id session}
+         :expires-at (core/expires-at access-token)
+         :signed_by {:kid kid}}))
     (when refresh-token
       (dataset/stack-entity
-       -refresh-
-       {:value refresh-token
-        :session {:id session}
-        :expires-at (core/expires-at refresh-token)
-        :signed_by {:kid kid}}))))
+        -refresh-
+        {:value refresh-token
+         :session {:id session}
+         :expires-at (core/expires-at refresh-token)
+         :signed_by {:kid kid}}))))
 
 (defn on-session-create
   [{:keys [session audience user scope client]}]
   (dataset/stack-entity
-   -session-
-   {:id session
-    :user {:euuid (:euuid user)}
-    :audience audience
-    :active true
-    :client {:euuid client}
-    :scope (str/join " " scope)}))
+    -session-
+    {:id session
+     :user {:euuid (:euuid user)}
+     :audience audience
+     :active true
+     :client {:euuid client}
+     :scope (str/join " " scope)}))
 
 (defn on-session-kill
   [{:keys [session]}]
   (dataset/stack-entity
-   -session-
-   {:id session
-    :active false}))
+    -session-
+    {:id session
+     :active false}))
 
 (defn current-version
   []
@@ -140,10 +141,10 @@
 (patch/current-version ::dataset (:name (current-version)))
 
 (patch/upgrade
- ::dataset "0.1.3"
- (log/info "[IAM] Old version of OAuth Store is deployed. Deploying newer version!")
- (dataset/deploy! (current-version))
- (dataset/reload))
+  ::dataset "0.1.3"
+  (log/info "[IAM] Old version of OAuth Store is deployed. Deploying newer version!")
+  (dataset/deploy! (current-version))
+  (dataset/reload))
 
 (defn level-store
   []
@@ -158,7 +159,8 @@
     session :id
     user :user
     {client :euuid} :client}]
-  (let [{{audience "aud" scope "scope"} :payload} (iam/jwt-decode access-token)
+  (let [{{audience "aud"
+          scope "scope"} :payload} (iam/jwt-decode access-token)
         scope (set (str/split scope #" "))
         user-details (core/get-resource-owner (:name user))]
     (core/set-session session {:client client
@@ -174,17 +176,17 @@
   []
   (let [sessions
         (dataset/search-entity
-         -session-
-         {:active {:_boolean :TRUE}}
-         {:euuid nil
-          :id nil
-          :client  [{:selections {:euuid nil}}]
-          :user [{:selections {:name nil}}]
-          :access_tokens [{:selections {:value nil}
-                           :args {:_where {:revoked {:_boolean :NOT_TRUE}}
-                                  :_order_by {:expires_at :desc}}}]
-          :refresh_tokens [{:selections {:value nil}
-                            :args {:_maybe {:revoked {:_boolean :NOT_TRUE}}}}]})]
+          -session-
+          {:active {:_boolean :TRUE}}
+          {:euuid nil
+           :id nil
+           :client [{:selections {:euuid nil}}]
+           :user [{:selections {:name nil}}]
+           :access_tokens [{:selections {:value nil}
+                            :args {:_where {:revoked {:_boolean :NOT_TRUE}}
+                                   :_order_by {:expires_at :desc}}}]
+           :refresh_tokens [{:selections {:value nil}
+                             :args {:_maybe {:revoked {:_boolean :NOT_TRUE}}}}]})]
     (doseq [session sessions] (load-session session))))
 
 (defn open-store
@@ -203,7 +205,7 @@
               (when (= (:topic data) _key)
                 data))]
       (async/go-loop
-       [data (async/<! store-messages)]
+        [data (async/<! store-messages)]
         (log/debugf "[OAuth Store] Received message\n%s" (with-out-str (pprint data)))
         (try
           (condp test-message data
@@ -231,20 +233,20 @@
           (doseq [audience audiences
                   :let [signed-tokens (get tokens audience)]]
             (iam/publish
-             :oauth.session/created
-             {:session session
-              :client client-euuid
-              :audience audience
-              :scope (get scopes audience)
-              :user {:euuid user-euuid}})
+              :oauth.session/created
+              {:session session
+               :client client-euuid
+               :audience audience
+               :scope (get scopes audience)
+               :user {:euuid user-euuid}})
             (iam/publish
-             :oauth.grant/tokens
-             {:tokens signed-tokens
-              :session session})))
+              :oauth.grant/tokens
+              {:tokens signed-tokens
+               :session session})))
         (doseq [k @iam/encryption-keys]
           (iam/publish
-           :keypair/added
-           {:key-pair k})))
+            :keypair/added
+            {:key-pair k})))
       ;; If there were already keys in DB
       ;; and they weren't loaded... Like
       ;; if encryption wasn't unsealed... than
@@ -256,8 +258,8 @@
         ;; keys that were initialized
         (doseq [k current]
           (iam/publish
-           :keypair/added
-           {:key-pair k}))
+            :keypair/added
+            {:key-pair k}))
         (load-sessions)))))
 
 (defn on-encryption-enabled
@@ -282,19 +284,19 @@
   ([older-than]
    (let [now (vura/time->value (vura/date))]
      (dataset/purge-entity
-      -key-pairs-
-      {:_where {:modified_on {:_le (vura/value->time
-                                    (- now older-than))}}}
-      {:kid nil}))))
+       -key-pairs-
+       {:_where {:modified_on {:_le (vura/value->time
+                                      (- now older-than))}}}
+       {:kid nil}))))
 
 (defn purge-sessions
   []
   (dataset/purge-entity
-   -session-
-   nil
-   {:euuid nil
-    :access_tokens [{:selections {:euuid nil}}]
-    :refresh_tokens [{:selections {:euuid nil}}]}))
+    -session-
+    nil
+    {:euuid nil
+     :access_tokens [{:selections {:euuid nil}}]
+     :refresh_tokens [{:selections {:euuid nil}}]}))
 
 (defn purge-tokens
   []
@@ -318,7 +320,7 @@
 (comment
   (def older-than 0)
   (->
-   (deref iam/encryption-keys)
-   first
-   :public
-   iam/encode-rsa-key))
+    (deref iam/encryption-keys)
+    first
+    :public
+    iam/encode-rsa-key))

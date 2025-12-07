@@ -11,13 +11,15 @@
     [com.walmartlabs.lacinia.resolve :as resolve]
     [com.walmartlabs.lacinia.selection :as selection]
     neyho.eywa
-   ; [neyho.eywa.transit :refer [<-transit]]
     [neyho.eywa.data]
     [neyho.eywa.dataset.core :as dataset]
     [neyho.eywa.dataset.uuids :as du]
     [neyho.eywa.db :as db :refer [*db*]]
     [neyho.eywa.iam.uuids :as au]
-    [neyho.eywa.lacinia :as lacinia])
+    [neyho.eywa.lacinia :as lacinia]
+    [neyho.eywa.transit :refer [<-transit]]
+    [neyho.eywa.update :as update]
+    [patcho.patch :as patch])
   (:import [org.postgresql.util PGobject]))
 
 (defonce ^:dynamic *model* (ref nil))
@@ -43,7 +45,33 @@
 
 (defonce publisher (async/pub subscription :topic))
 
-(def datasets #uuid "a800516e-9cfa-4414-9874-60f2285ec330")
+;;; Dataset Meta-Model Versioning & Migration
+
+;; Dataset meta-model instance UUID
+(def datasets-model-uuid #uuid "4ab2fe4f-9b74-4a23-8441-60b58be08e7e")
+
+;; Declare current dataset meta-model version
+(patch/current-version ::dataset "2025.6.0")
+
+(defn current-dataset-version
+  "Returns the dataset meta-model from resources"
+  []
+  (<-transit (slurp (io/resource "dataset/dataset.json"))))
+
+;; Migration: 1.0 → 1.1.0 (removes Dataset Entity/Relation entities)
+(patch/upgrade ::dataset "1.0"
+               (log/info "[Dataset] Upgrading meta-model 1.0 → 1.1.0 (removing Dataset Entity/Relation)")
+               (dataset/deploy! *db* (current-dataset-version)))
+
+(declare latest-deployed-version)
+
+(defn level-dataset!
+  "Ensures dataset meta-model is at current version and tracked in __version_history"
+  []
+  (when-let [{deployed-version :name} (latest-deployed-version datasets-model-uuid)]
+    (log/infof "[Dataset] Checking meta-model version: %s → 1.1.0" deployed-version)
+    (patch/apply ::dataset deployed-version "1.1.0")
+    (update/sync ::dataset "1.1.0")))
 
 ; (defn wrap-resolver-request
 ;   "Function should take handle apply "
@@ -264,7 +292,7 @@
   [(if (some? euuid)
      (if-let [dataset (db/get-entity
                         *db*
-                        datasets
+                        du/dataset
                         {:euuid euuid}
                         {:name nil
                          :euuid nil
@@ -312,6 +340,12 @@
   datasets to work. That includes aaa.edm and dataset.edm models"
   ([db]
    (is-supported? db)
+   ;; Ensure dataset meta-model is at current version
+   (try
+     (level-dataset!)
+     (log/info "[Dataset] Meta-model version check complete")
+     (catch Throwable e
+       (log/warn e "[Dataset] Could not level dataset meta-model (might be first install)")))
    db))
 
 (comment
