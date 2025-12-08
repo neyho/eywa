@@ -26,7 +26,6 @@
              sync-entity
              delete-entity]]
     [neyho.eywa.dataset.core :as core]
-    [neyho.eywa.iam :as iam]
     [neyho.eywa.iam.access :as access]
     [neyho.eywa.iam.access.context :refer [*user*]]
     [neyho.eywa.iam.gen :as gen]
@@ -41,9 +40,6 @@
   (:import
     [java.security KeyPairGenerator]))
 
-(def alphabet (.toCharArray "0123456789abcdefghijklmnopqrstuvwxyz"))
-(def MASK 35)
-
 (defonce subscription (async/chan (async/sliding-buffer 10000)))
 (defonce publisher
   (async/pub
@@ -54,21 +50,6 @@
 
 (defn publish [topic data]
   (async/put! subscription (assoc data :topic topic)))
-
-(defn hash-uuid [uuid]
-  (let [^long lo (.getLeastSignificantBits uuid)
-        ^long hi (.getMostSignificantBits uuid)
-        uuid-bytes (-> (java.nio.ByteBuffer/allocate 16)
-                       (.putLong hi)
-                       (.putLong lo)
-                       (.array))
-        builder (StringBuilder.)]
-    (.toString
-      (reduce
-        (fn [b by]
-          (.append b (get alphabet (bit-and by MASK))))
-        builder
-        uuid-bytes))))
 
 (defn root?
   [roles]
@@ -102,11 +83,11 @@
   (swap! encryption-keys (fn [current]
                            (let [[active deactivate] (split-at 3 (conj current key-pair))]
                              (when (not-empty deactivate)
-                               (iam/publish
+                               (publish
                                  :keypair/removed
                                  {:key-pairs deactivate}))
                              active)))
-  (iam/publish
+  (publish
     :keypair/added
     {:key-pair key-pair})
   nil)
@@ -319,11 +300,6 @@
                             (map #(java.util.UUID/fromString %) roles)))))
               nil
               protection)]
-        ; (def user *user*)
-        ; (def roles neyho.eywa.iam.access.context/*roles*)
-        ; (def scopes scopes)
-        ; (def roles roles)
-        ; (def user-scopes neyho.eywa.iam.access.context/*scopes*)
         (if (and
               (or (empty? scopes)
                   (some access/scope-allowed? scopes))

@@ -15,7 +15,7 @@
     [neyho.eywa.dataset.core :as dataset]
     [neyho.eywa.dataset.uuids :as du]
     [neyho.eywa.db :as db :refer [*db*]]
-    [neyho.eywa.iam.uuids :as au]
+    [neyho.eywa.iam.access.context :refer [*user*]]
     [neyho.eywa.lacinia :as lacinia]
     [neyho.eywa.transit :refer [<-transit]]
     [neyho.eywa.update :as update]
@@ -59,9 +59,10 @@
   (<-transit (slurp (io/resource "dataset/dataset.json"))))
 
 ;; Migration: 1.0 → 1.1.0 (removes Dataset Entity/Relation entities)
-(patch/upgrade ::dataset "1.0"
-               (log/info "[Dataset] Upgrading meta-model 1.0 → 1.1.0 (removing Dataset Entity/Relation)")
-               (dataset/deploy! *db* (current-dataset-version)))
+(patch/upgrade
+  ::dataset "1.0.0"
+  (log/info "[Dataset] Upgrading meta-model 1.0 → 1.1.0 (removing Dataset Entity/Relation)")
+  (dataset/deploy! *db* (current-dataset-version)))
 
 (declare latest-deployed-version)
 
@@ -69,9 +70,9 @@
   "Ensures dataset meta-model is at current version and tracked in __version_history"
   []
   (when-let [{deployed-version :name} (latest-deployed-version datasets-model-uuid)]
-    (log/infof "[Dataset] Checking meta-model version: %s → 1.1.0" deployed-version)
-    (patch/apply ::dataset deployed-version "1.1.0")
-    (update/sync ::dataset "1.1.0")))
+    (log/infof "[Dataset] Checking meta-model version: %s → 1.0.0" deployed-version)
+    (patch/apply ::dataset deployed-version "1.0.0")
+    (update/sync ::dataset "1.0.0")))
 
 ; (defn wrap-resolver-request
 ;   "Function should take handle apply "
@@ -162,7 +163,7 @@
   [variable]
   (let [args (select-keys (var-get variable) [:euuid])
         data (get-entity
-               au/user args
+               #uuid "edcab1db-ee6f-4744-bfea-447828893223" args
                {:_eid nil
                 :euuid nil
                 :name nil
@@ -173,8 +174,7 @@
     (alter-var-root variable (constantly data))))
 
 (comment
-  (binding [neyho.eywa.iam.access.context/*roles*
-            #{#uuid "28895548-9fe6-4a5d-93d7-14468c2b2b51"}
+  (binding [neyho.eywa.iam.access.context/*roles* #{#uuid "28895548-9fe6-4a5d-93d7-14468c2b2b51"}
             neyho.eywa.iam.access.context/*user* #uuid "0a6e2c0e-fed8-45e4-9ec7-9beca0c29531"]
     (let [m (protect-dataset (dataset/get-model *db*))]
       {:entities
@@ -216,21 +216,17 @@
        :model nil
        :name nil}))
   (def version)
-  (def username "rgersak")
   (def user nil))
 
 ;; @resolve
 (defn deploy-dataset
   ([model] (deploy-dataset nil model nil))
   ([context model] (deploy-dataset context model nil))
-  ([{:keys [username]
-     :as context}
-    {version :version}
-    _]
+  ([context {version :version} _]
    (let [selection (executor/selections-tree context)]
      (log/infof
        "User %s deploying dataset %s@%s"
-       username (-> version :dataset :name) (:name version))
+       (:name *user*) (-> version :dataset :name) (:name version))
      (try
        ; (let [{:keys [euuid]} (dataset/deploy! connector version)]
        ;; TODO - Rethink this. Should we use teard-down and setup instead
@@ -243,7 +239,7 @@
                    :model (dataset/get-model *db*)}})
          (log/infof
            "User %s deployed version %s@%s"
-           username (-> version :dataset :name) (:name version))
+           (:name *user*) (-> version :dataset :name) (:name version))
          (when (not-empty selection)
            ; (log/tracef
            ;   "Returning data for selection:\n%s"
@@ -313,11 +309,10 @@
 
 ;; @hook
 (defn destroy-linked-versions
-  [{username :eywa/username
-    destroy ::destroy
+  [{destroy ::destroy
     :as ctx} args v]
   (when destroy
-    (log/infof "User %s destroying dataset %s" username (:name destroy))
+    (log/infof "User %s destroying dataset %s" (:name *user*) (:name destroy))
     (dataset/destroy! *db* destroy)
     (comment
       (dataset/get-relations (-> destroy :versions first :model)))

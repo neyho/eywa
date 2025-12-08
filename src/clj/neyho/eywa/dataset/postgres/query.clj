@@ -663,6 +663,9 @@
               _ (log/tracef
                  "[%s]Storing entity group %s\nData:\n%s\nQuery:\n%s"
                  entity-table constraint (pprint row-data) query)
+              _ (do
+                 (def query query)
+                 (def row-data row-data))
               result (postgres/execute!
                       tx (into [query] (flatten row-data))
                       *return-type*)

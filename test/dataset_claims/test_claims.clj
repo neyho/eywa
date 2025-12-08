@@ -1,13 +1,13 @@
 (ns dataset-claims.test-claims
   (:require
-   [clojure.pprint :refer [pprint]]
-   [clojure.string :as str]
-   [next.jdbc :as jdbc]
-   [neyho.eywa.dataset :as dataset]
-   [neyho.eywa.dataset.core :as core]
-   [neyho.eywa.dataset.uuids :as du]
-   [neyho.eywa.db :refer [*db*]]
-   [neyho.eywa.lacinia :as lacinia]))
+    [clojure.pprint :refer [pprint]]
+    [clojure.string :as str]
+    [next.jdbc :as jdbc]
+    [neyho.eywa.dataset :as dataset]
+    [neyho.eywa.dataset.core :as core]
+    [neyho.eywa.dataset.uuids :as du]
+    [neyho.eywa.db :refer [*db*]]
+    [neyho.eywa.lacinia :as lacinia]))
 
 (println "\n====================================")
 (println "DATASET CLAIMS SYSTEM TEST")
@@ -44,14 +44,14 @@
 
         ;; Add relation
         model-with-relations (core/add-relation
-                              model-with-entities
-                              (core/map->ERDRelation
-                               {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
-                                :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
-                                :from-label "product"
-                                :to-label "category"
-                                :cardinality "m2o"}))]
+                               model-with-entities
+                               (core/map->ERDRelation
+                                 {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
+                                  :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+                                  :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
+                                  :from-label "product"
+                                  :to-label "category"
+                                  :cardinality "m2o"}))]
 
     {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000001"
      :name "Test Dataset A"
@@ -93,14 +93,14 @@
 
         ;; Add relation
         model-with-relations (core/add-relation
-                              model-with-entities
-                              (core/map->ERDRelation
-                               {:euuid #uuid "bbbbbbbb-2222-0000-0000-000000000001"
-                                :from #uuid "bbbbbbbb-1111-0000-0000-000000000003"
-                                :to #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                :from-label "order"
-                                :to-label "product"
-                                :cardinality "m2m"}))]
+                               model-with-entities
+                               (core/map->ERDRelation
+                                 {:euuid #uuid "bbbbbbbb-2222-0000-0000-000000000001"
+                                  :from #uuid "bbbbbbbb-1111-0000-0000-000000000003"
+                                  :to #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+                                  :from-label "order"
+                                  :to-label "product"
+                                  :cardinality "m2m"}))]
 
     {:euuid #uuid "bbbbbbbb-0000-0000-0000-000000000001"
      :name "Test Dataset B"
@@ -226,14 +226,14 @@
                                 (core/add-entity category-entity))
         ;; Share the SAME relation UUID as Dataset A
         model-with-relations (core/add-relation
-                              model-with-entities
-                              (core/map->ERDRelation
-                               {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
-                                :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
-                                :from-label "product"
-                                :to-label "category"
-                                :cardinality "m2o"}))]
+                               model-with-entities
+                               (core/map->ERDRelation
+                                 {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
+                                  :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+                                  :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
+                                  :from-label "product"
+                                  :to-label "category"
+                                  :cardinality "m2o"}))]
     {:euuid #uuid "eeeeeeee-0000-0000-0000-000000000001"
      :name "Test Dataset E"
      :version "1.0.0"
@@ -265,8 +265,8 @@
   (println "\n--- PostgreSQL Tables ---")
   (with-open [con (jdbc/get-connection (:datasource neyho.eywa.db/*db*))]
     (let [tables (jdbc/execute!
-                  con
-                  ["SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename NOT LIKE '%modeling%' AND tablename NOT LIKE '%deploy%' ORDER BY tablename"])]
+                   con
+                   ["SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename NOT LIKE '%modeling%' AND tablename NOT LIKE '%deploy%' ORDER BY tablename"])]
       (doseq [table tables]
         (println (format "  - %s" (:pg_tables/tablename table)))))))
 
@@ -274,16 +274,16 @@
   "Returns set of column names for a table"
   (with-open [con (jdbc/get-connection (:datasource neyho.eywa.db/*db*))]
     (let [columns (jdbc/execute!
-                   con
-                   ["SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ?" table-name])]
+                    con
+                    ["SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ?" table-name])]
       (set (map :columns/column_name columns)))))
 
 (defn table-exists? [table-name]
   "Check if a table exists in the database"
   (with-open [con (jdbc/get-connection (:datasource neyho.eywa.db/*db*))]
     (let [result (jdbc/execute!
-                  con
-                  ["SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = ?)" table-name])]
+                   con
+                   ["SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = ?)" table-name])]
       (:exists (first result)))))
 
 (defn get-graphql-types []
@@ -293,10 +293,10 @@
       (let [type-keys (keys schema)
             ;; Filter out special GraphQL keys (:Query, :Mutation, etc) and introspection types
             entity-types (filter
-                          #(and (keyword? %)
-                                (not (#{:Query :Mutation :Subscription} %))
-                                (not (str/starts-with? (name %) "__")))
-                          type-keys)]
+                           #(and (keyword? %)
+                                 (not (#{:Query :Mutation :Subscription} %))
+                                 (not (str/starts-with? (name %) "__")))
+                           type-keys)]
         (set (map name entity-types))))
     (catch Exception e
       (println (format "Warning: Could not get GraphQL schema: %s" (.getMessage e)))
@@ -384,10 +384,10 @@
     (println "\n4. Delete Dataset A")
     (let [dataset-a-uuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"
           dataset (dataset/get-entity
-                   neyho.eywa.dataset.uuids/dataset
-                   {:euuid dataset-a-uuid}
-                   {:versions [{:selections {:euuid nil
-                                             :name nil}}]})]
+                    neyho.eywa.dataset.uuids/dataset
+                    {:euuid dataset-a-uuid}
+                    {:versions [{:selections {:euuid nil
+                                              :name nil}}]})]
       (core/destroy! *db* dataset))
 
     (println "\n5. Verify Product still exists, Category deleted")
@@ -413,10 +413,10 @@
     (println "\n4. Delete Dataset A")
     (let [dataset-a-uuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"
           dataset (dataset/get-entity
-                   neyho.eywa.dataset.uuids/dataset
-                   {:euuid dataset-a-uuid}
-                   {:versions [{:selections {:euuid nil
-                                             :name nil}}]})]
+                    neyho.eywa.dataset.uuids/dataset
+                    {:euuid dataset-a-uuid}
+                    {:versions [{:selections {:euuid nil
+                                              :name nil}}]})]
       (core/destroy! *db* dataset))
 
     (println "\n5. Verify Product still exists, Category deleted")
@@ -449,10 +449,10 @@
     (println "\n2. Delete Dataset A (exclusive entities should be dropped)")
     (let [dataset-a-uuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"
           dataset (dataset/get-entity
-                   neyho.eywa.dataset.uuids/dataset
-                   {:euuid dataset-a-uuid}
-                   {:versions [{:selections {:euuid nil
-                                             :name nil}}]})]
+                    neyho.eywa.dataset.uuids/dataset
+                    {:euuid dataset-a-uuid}
+                    {:versions [{:selections {:euuid nil
+                                              :name nil}}]})]
       (core/destroy! *db* dataset))
 
     (let [model-after-delete (dataset/deployed-model)
@@ -508,10 +508,10 @@
     (println "\n4. Delete Dataset A")
     (let [dataset-a-uuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"
           dataset (dataset/get-entity
-                   neyho.eywa.dataset.uuids/dataset
-                   {:euuid dataset-a-uuid}
-                   {:versions [{:selections {:euuid nil
-                                             :name nil}}]})]
+                    neyho.eywa.dataset.uuids/dataset
+                    {:euuid dataset-a-uuid}
+                    {:versions [{:selections {:euuid nil
+                                              :name nil}}]})]
       (core/destroy! *db* dataset))
 
     (println "\n5. Verify Product and Category survive, exclusive relation deleted")
@@ -549,12 +549,12 @@
       (assert-true test-name (contains? (:claimed-by item) dataset-a-v2-uuid) "Should have v2 claim")
       (assert-true test-name (contains? (:claimed-by item) dataset-a-v1-uuid) "Should have v1 claim (preserved for rollback)"))
     (core/destroy! *db* (dataset/get-entity
-                         neyho.eywa.dataset.uuids/dataset
-                         {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
-                         {:euuid nil
-                          :name nil
-                          :versions [{:selections
-                                      {:euuid nil}}]}))
+                          neyho.eywa.dataset.uuids/dataset
+                          {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
+                          {:euuid nil
+                           :name nil
+                           :versions [{:selections
+                                       {:euuid nil}}]}))
     nil))
 
 ;; Helper datasets for recall testing
@@ -622,9 +622,9 @@
             category (core/get-entity model #uuid "aaaaaaaa-1111-0000-0000-000000000002")
             dataset (try
                       (dataset/get-entity
-                       neyho.eywa.dataset.uuids/dataset
-                       {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
-                       {:euuid nil})
+                        neyho.eywa.dataset.uuids/dataset
+                        {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
+                        {:euuid nil})
                       (catch Throwable _ nil))]
         (assert-true test-name (nil? product) "Product should not exist in model after recall")
         (assert-true test-name (nil? category) "Category should not exist in model after recall")
@@ -751,14 +751,14 @@
                                 (core/add-entity role-entity)
                                 (core/add-entity permission-entity))
         model-with-relations (core/add-relation
-                              model-with-entities
-                              (core/map->ERDRelation
-                               {:euuid #uuid "ffffffff-2222-0000-0000-000000000001"
-                                :from #uuid "ffffffff-1111-0000-0000-000000000002"
-                                :to #uuid "ffffffff-1111-0000-0000-000000000003"
-                                :from-label "test_role"
-                                :to-label "test_permission"
-                                :cardinality "m2m"}))]
+                               model-with-entities
+                               (core/map->ERDRelation
+                                 {:euuid #uuid "ffffffff-2222-0000-0000-000000000001"
+                                  :from #uuid "ffffffff-1111-0000-0000-000000000002"
+                                  :to #uuid "ffffffff-1111-0000-0000-000000000003"
+                                  :from-label "test_role"
+                                  :to-label "test_permission"
+                                  :cardinality "m2m"}))]
     {:euuid #uuid "ffffffff-0000-0000-0000-000000000002"
      :name "Lifecycle Test v2"
      :version "2.0.0"
@@ -842,6 +842,233 @@
       (assert-true test-name (contains? user-columns "email") "TestUser table should have email column")
       (assert-true test-name (contains? permission-columns "code") "TestPermission table should have code column"))))
 
+;; Datasets for attribute persistence testing (Scenario 9)
+(defn create-user-v1 []
+  "Create User Service v1 with attributes: Email, Phone, FirstName"
+  (let [model (core/map->ERDModel {})
+        user-entity (-> (core/map->ERDEntity {:euuid #uuid "99999999-1111-0000-0000-000000000001"
+                                              :name "Test9User"})
+                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000001"
+                                             :name "Email"
+                                             :type "string"
+                                             :constraint "mandatory"
+                                             :active true})
+                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000002"
+                                             :name "Phone"
+                                             :type "string"
+                                             :active true})
+                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000003"
+                                             :name "FirstName"
+                                             :type "string"
+                                             :active true}))
+        model-with-entity (core/add-entity model user-entity)]
+    {:euuid #uuid "99999999-0000-0000-0000-000000000001"
+     :name "User Service v1"
+     :version "1.0.0"
+     :dataset {:euuid #uuid "99999999-0000-0000-0000-000000000000"
+               :name "UserService"}
+     :model model-with-entity}))
+
+(defn create-user-v2 []
+  "Create User Service v2 - removes Phone, adds Address. Attrs: Email, FirstName, Address"
+  (let [model (core/map->ERDModel {})
+        user-entity (-> (core/map->ERDEntity {:euuid #uuid "99999999-1111-0000-0000-000000000001"
+                                              :name "Test9User"})
+                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000001"
+                                             :name "Email"
+                                             :type "string"
+                                             :constraint "mandatory"
+                                             :active true})
+                        ;; Phone REMOVED (not in v2)
+                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000003"
+                                             :name "FirstName"
+                                             :type "string"
+                                             :active true})
+                        ;; Address ADDED (new in v2)
+                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000004"
+                                             :name "Address"
+                                             :type "string"
+                                             :active true}))
+        model-with-entity (core/add-entity model user-entity)]
+    {:euuid #uuid "99999999-0000-0000-0000-000000000002"
+     :name "User Service v2"
+     :version "2.0.0"
+     :dataset {:euuid #uuid "99999999-0000-0000-0000-000000000000"
+               :name "UserService"}
+     :model model-with-entity}))
+
+(defn create-user-v3 []
+  "Create User Service v3 - re-adds Phone, removes FirstName, adds LastName. Attrs: Email, Phone, Address, LastName"
+  (let [model (core/map->ERDModel {})
+        user-entity (-> (core/map->ERDEntity {:euuid #uuid "99999999-1111-0000-0000-000000000001"
+                                              :name "Test9User"})
+                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000001"
+                                             :name "Email"
+                                             :type "string"
+                                             :constraint "mandatory"
+                                             :active true})
+                        ;; Phone RE-ADDED (was in v1, not in v2, back in v3)
+                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000002"
+                                             :name "Phone"
+                                             :type "string"
+                                             :active true})
+                        ;; FirstName REMOVED (not in v3)
+                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000004"
+                                             :name "Address"
+                                             :type "string"
+                                             :active true})
+                        ;; LastName ADDED (new in v3)
+                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000005"
+                                             :name "LastName"
+                                             :type "string"
+                                             :active true}))
+        model-with-entity (core/add-entity model user-entity)]
+    {:euuid #uuid "99999999-0000-0000-0000-000000000003"
+     :name "User Service v3"
+     :version "3.0.0"
+     :dataset {:euuid #uuid "99999999-0000-0000-0000-000000000000"
+               :name "UserService"}
+     :model model-with-entity}))
+
+(defn scenario-9-attribute-persistence []
+  (let [test-name "Scenario 9"]
+    (println "\n=== Phase 1: Initial Deployment (v1) ===")
+    (println "1. Deploy v1 with [Email, Phone, FirstName]")
+    (core/deploy! *db* (create-user-v1))
+
+    (comment
+      (def test-name "Scenario 9")
+      (def model (dataset/deployed-model))
+      (def user (core/get-entity model #uuid "99999999-1111-0000-0000-000000000001")))
+    (let [model (dataset/deployed-model)
+          {attrs :attributes
+           :as user} (core/get-entity model #uuid "99999999-1111-0000-0000-000000000001")
+          email-attr (core/get-attribute user #uuid "99999999-1111-1111-0000-000000000001")
+          phone-attr (core/get-attribute user #uuid "99999999-1111-1111-0000-000000000002")
+          firstname-attr (core/get-attribute user #uuid "99999999-1111-1111-0000-000000000003")]
+
+      (assert-equals test-name 3 (count attrs) "Should have 3 attributes")
+      (assert-true test-name (:active email-attr) "Email should be active")
+      (assert-true test-name (:active phone-attr) "Phone should be active")
+      (assert-true test-name (:active firstname-attr) "FirstName should be active"))
+
+    (println "\n=== Phase 2: Remove Phone, Add Address (v2) ===")
+    (println "2. Deploy v2 with [Email, FirstName, Address]")
+    (core/deploy! *db* (create-user-v2))
+
+    (let [model (dataset/deployed-model)
+          user (get-in model [:entities #uuid "99999999-1111-0000-0000-000000000001"])
+          attrs (:attributes user)
+          email-attr (first (filter #(= "Email" (:name %)) attrs))
+          phone-attr (first (filter #(= "Phone" (:name %)) attrs))
+          firstname-attr (first (filter #(= "FirstName" (:name %)) attrs))
+          address-attr (first (filter #(= "Address" (:name %)) attrs))]
+
+      ;; CRITICAL: All 4 attributes should exist (including removed Phone)
+      (assert-equals test-name 4 (count attrs) "Should have 4 attributes (3 active + 1 inactive)")
+
+      ;; Phone should EXIST but be INACTIVE
+      (assert-true test-name (some? phone-attr) "Phone should still exist in global model")
+      (assert-true test-name (not (:active phone-attr)) "Phone should be INACTIVE (not in v2)")
+
+      ;; Email should be ACTIVE
+      (assert-true test-name (:active email-attr) "Email should be active")
+
+      ;; FirstName should be ACTIVE
+      (assert-true test-name (:active firstname-attr) "FirstName should be active")
+
+      ;; Address should be ACTIVE
+      (assert-true test-name (:active address-attr) "Address should be active"))
+
+    ;; Verify DB schema has only active attributes
+    (let [user-columns (get-table-columns "test9user")]
+      (assert-true test-name (contains? user-columns "email") "DB should have email column")
+      (assert-true test-name (contains? user-columns "firstname") "DB should have firstname column")
+      (assert-true test-name (contains? user-columns "address") "DB should have address column")
+      (assert-true test-name (not (contains? user-columns "phone")) "DB should NOT have phone (inactive)"))
+
+    (println "\n=== Phase 3: Re-add Phone, Remove FirstName, Add LastName (v3) ===")
+    (println "3. Deploy v3 with [Email, Phone, Address, LastName]")
+    (core/deploy! *db* (create-user-v3))
+
+    (let [model (dataset/deployed-model)
+          user (get-in model [:entities #uuid "99999999-1111-0000-0000-000000000001"])
+          attrs (:attributes user)
+          email-attr (first (filter #(= "Email" (:name %)) attrs))
+          phone-attr (first (filter #(= "Phone" (:name %)) attrs))
+          firstname-attr (first (filter #(= "FirstName" (:name %)) attrs))
+          address-attr (first (filter #(= "Address" (:name %)) attrs))
+          lastname-attr (first (filter #(= "LastName" (:name %)) attrs))]
+
+      ;; All 5 attributes should exist
+      (assert-equals test-name 5 (count attrs) "Should have 5 attributes total (4 active + 1 inactive)")
+
+      ;; Phone should be ACTIVE again (reactivated)
+      (assert-true test-name (:active phone-attr) "Phone should be ACTIVE (reactivated in v3)")
+
+      ;; FirstName should be INACTIVE now
+      (assert-true test-name (some? firstname-attr) "FirstName should still exist in global model")
+      (assert-true test-name (not (:active firstname-attr)) "FirstName should be INACTIVE")
+
+      ;; Email should be active
+      (assert-true test-name (:active email-attr) "Email should be active")
+
+      ;; Address should be active
+      (assert-true test-name (:active address-attr) "Address should be active")
+
+      ;; LastName should be active
+      (assert-true test-name (:active lastname-attr) "LastName should be active"))
+
+    ;; Verify DB has only active attributes
+    (let [user-columns (get-table-columns "test9user")]
+      (assert-true test-name (contains? user-columns "email") "DB should have email")
+      (assert-true test-name (contains? user-columns "phone") "DB should have phone (reactivated)")
+      (assert-true test-name (contains? user-columns "address") "DB should have address")
+      (assert-true test-name (contains? user-columns "lastname") "DB should have lastname")
+      (assert-true test-name (not (contains? user-columns "firstname")) "DB should NOT have firstname (inactive)"))
+
+    (println "\n=== Phase 4: Rollback - Recall v3 ===")
+    (println "4. Recall most recent version (v3) - should rollback to v2")
+    (core/recall! *db* {:euuid #uuid "99999999-0000-0000-0000-000000000003"})
+
+    (let [model (dataset/deployed-model)
+          user (get-in model [:entities #uuid "99999999-1111-0000-0000-000000000001"])
+          attrs (:attributes user)
+          email-attr (first (filter #(= "Email" (:name %)) attrs))
+          phone-attr (first (filter #(= "Phone" (:name %)) attrs))
+          firstname-attr (first (filter #(= "FirstName" (:name %)) attrs))
+          address-attr (first (filter #(= "Address" (:name %)) attrs))
+          lastname-attr (first (filter #(= "LastName" (:name %)) attrs))]
+
+      ;; All 5 attributes still exist
+      (assert-equals test-name 5 (count attrs) "All attributes preserved after rollback")
+
+      ;; After rollback to v2: Email, FirstName, Address should be active
+      (assert-true test-name (:active email-attr) "Email should be active")
+
+      ;; Phone should be INACTIVE again (not in v2)
+      (assert-true test-name (not (:active phone-attr)) "Phone should be INACTIVE after rollback")
+
+      ;; FirstName should be ACTIVE again (back in v2)
+      (assert-true test-name (:active firstname-attr) "FirstName should be ACTIVE again")
+
+      ;; Address should be ACTIVE
+      (assert-true test-name (:active address-attr) "Address should be active")
+
+      ;; LastName should be INACTIVE (was only in v3)
+      (assert-true test-name (not (:active lastname-attr)) "LastName should be INACTIVE"))
+
+    ;; Verify DB schema matches v2
+    (let [user-columns (get-table-columns "test9user")]
+      (assert-true test-name (contains? user-columns "email") "DB should have email")
+      (assert-true test-name (contains? user-columns "firstname") "DB should have firstname (reactivated)")
+      (assert-true test-name (contains? user-columns "address") "DB should have address")
+      (assert-true test-name (not (contains? user-columns "phone")) "DB should NOT have phone")
+      (assert-true test-name (not (contains? user-columns "lastname")) "DB should NOT have lastname"))
+
+    ;; Cleanup
+    (core/destroy! *db* {:euuid #uuid "99999999-0000-0000-0000-000000000000"})))
+
 (defn cleanup []
   (println "\n\nCLEANUP")
   (println "--------")
@@ -850,10 +1077,10 @@
     ;; Delete Dataset A
     (try
       (let [dataset (dataset/get-entity
-                     neyho.eywa.dataset.uuids/dataset
-                     {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
-                     {:versions [{:selections {:euuid nil
-                                               :name nil}}]})]
+                      neyho.eywa.dataset.uuids/dataset
+                      {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
+                      {:versions [{:selections {:euuid nil
+                                                :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset A")))
@@ -863,10 +1090,10 @@
     ;; Delete Dataset B
     (try
       (let [dataset (dataset/get-entity
-                     neyho.eywa.dataset.uuids/dataset
-                     {:euuid #uuid "bbbbbbbb-0000-0000-0000-000000000000"}
-                     {:versions [{:selections {:euuid nil
-                                               :name nil}}]})]
+                      neyho.eywa.dataset.uuids/dataset
+                      {:euuid #uuid "bbbbbbbb-0000-0000-0000-000000000000"}
+                      {:versions [{:selections {:euuid nil
+                                                :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset B")))
@@ -876,10 +1103,10 @@
     ;; Delete Dataset C
     (try
       (let [dataset (dataset/get-entity
-                     neyho.eywa.dataset.uuids/dataset
-                     {:euuid #uuid "cccccccc-0000-0000-0000-000000000000"}
-                     {:versions [{:selections {:euuid nil
-                                               :name nil}}]})]
+                      neyho.eywa.dataset.uuids/dataset
+                      {:euuid #uuid "cccccccc-0000-0000-0000-000000000000"}
+                      {:versions [{:selections {:euuid nil
+                                                :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset C")))
@@ -889,10 +1116,10 @@
     ;; Delete Dataset D
     (try
       (let [dataset (dataset/get-entity
-                     neyho.eywa.dataset.uuids/dataset
-                     {:euuid #uuid "dddddddd-0000-0000-0000-000000000000"}
-                     {:versions [{:selections {:euuid nil
-                                               :name nil}}]})]
+                      neyho.eywa.dataset.uuids/dataset
+                      {:euuid #uuid "dddddddd-0000-0000-0000-000000000000"}
+                      {:versions [{:selections {:euuid nil
+                                                :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset D")))
@@ -902,10 +1129,10 @@
     ;; Delete Dataset E
     (try
       (let [dataset (dataset/get-entity
-                     neyho.eywa.dataset.uuids/dataset
-                     {:euuid #uuid "eeeeeeee-0000-0000-0000-000000000000"}
-                     {:versions [{:selections {:euuid nil
-                                               :name nil}}]})]
+                      neyho.eywa.dataset.uuids/dataset
+                      {:euuid #uuid "eeeeeeee-0000-0000-0000-000000000000"}
+                      {:versions [{:selections {:euuid nil
+                                                :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset E")))
@@ -915,15 +1142,28 @@
     ;; Delete Lifecycle Dataset
     (try
       (let [dataset (dataset/get-entity
-                     neyho.eywa.dataset.uuids/dataset
-                     {:euuid #uuid "ffffffff-0000-0000-0000-000000000000"}
-                     {:versions [{:selections {:euuid nil
-                                               :name nil}}]})]
+                      neyho.eywa.dataset.uuids/dataset
+                      {:euuid #uuid "ffffffff-0000-0000-0000-000000000000"}
+                      {:versions [{:selections {:euuid nil
+                                                :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Lifecycle Dataset")))
       (catch Exception e
         (println (format "  Lifecycle Dataset: %s" (.getMessage e)))))
+
+    ;; Delete UserService Dataset
+    (try
+      (let [dataset (dataset/get-entity
+                      neyho.eywa.dataset.uuids/dataset
+                      {:euuid #uuid "99999999-0000-0000-0000-000000000000"}
+                      {:versions [{:selections {:euuid nil
+                                                :name nil}}]})]
+        (when dataset
+          (core/destroy! *db* dataset)
+          (println "  ✓ Deleted UserService Dataset")))
+      (catch Exception e
+        (println (format "  UserService Dataset: %s" (.getMessage e)))))
 
     (println "\n✓ Cleanup complete")
     (catch Exception e
@@ -968,6 +1208,9 @@
   (cleanup)
 
   (test-scenario "Scenario 8: Iterative Lifecycle & Integration" scenario-8-iterative-lifecycle)
+  (cleanup)
+
+  (test-scenario "Scenario 9: Attribute Persistence & Active Flags" scenario-9-attribute-persistence)
   (cleanup)
 
   ;; Print summary

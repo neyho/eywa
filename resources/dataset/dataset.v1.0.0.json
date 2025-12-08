@@ -1,7 +1,6 @@
 {
-  "~:name": "1.0",
-  "~:euuid": "~ua5d1ffbd-ff71-4215-aa09-0e3088dcd595",
-  "~:deployed": false,
+  "~:euuid": "~ub6d19bc6-ac09-4632-969e-4ab7c4daf56e",
+  "~:name": "1.0.0",
   "~:dataset": {
     "~:euuid": "~u4ab2fe4f-9b74-4a23-8441-60b58be08e7e",
     "~:name": "Datasets"
@@ -11,16 +10,27 @@
       "~:entities": {
         "~ua800516e-9cfa-4414-9874-60f2285ec330": {
           "~#neyho.eywa.dataset.core.ERDEntity": {
+            "~:name": "Dataset",
+            "~:width": 107.859375,
+            "~:original": null,
+            "~:type": "STRONG",
             "~:euuid": "~ua800516e-9cfa-4414-9874-60f2285ec330",
+            "~:clone": null,
             "~:position": {
               "~#neyho.eywa.modeling.core.Coordinate": {
                 "~:x": -1200,
                 "~:y": 940
               }
             },
-            "~:width": 123.37268829345703,
-            "~:height": 85.9302978515625,
-            "~:name": "Dataset",
+            "~:configuration": {
+              "~:constraints": {
+                "~:unique": [
+                  [
+                    "~u9713b57c-6a6b-40a3-a8d1-637172561f07"
+                  ]
+                ]
+              }
+            },
             "~:attributes": [
               {
                 "~#neyho.eywa.dataset.core.ERDEntityAttribute": {
@@ -34,30 +44,30 @@
                 }
               }
             ],
-            "~:type": "STRONG",
-            "~:configuration": {
-              "~:constraints": {
-                "~:unique": [
-                  [
-                    "~u9713b57c-6a6b-40a3-a8d1-637172561f07"
-                  ]
-                ]
-              }
-            }
+            "~:height": 90
           }
         },
         "~ud922edda-f8de-486a-8407-e62ad67bf44c": {
           "~#neyho.eywa.dataset.core.ERDEntity": {
+            "~:name": "Dataset Version",
+            "~:width": 150.765625,
+            "~:original": null,
+            "~:type": "WEAK",
             "~:euuid": "~ud922edda-f8de-486a-8407-e62ad67bf44c",
+            "~:clone": null,
             "~:position": {
               "~#neyho.eywa.modeling.core.Coordinate": {
                 "~:x": -850,
                 "~:y": 940
               }
             },
-            "~:width": 201.1880645751953,
-            "~:height": 112.65840148925781,
-            "~:name": "Dataset Version",
+            "~:configuration": {
+              "~:constraints": {
+                "~:unique": [
+                  []
+                ]
+              }
+            },
             "~:attributes": [
               {
                 "~#neyho.eywa.dataset.core.ERDEntityAttribute": {
@@ -95,7 +105,7 @@
               {
                 "~#neyho.eywa.dataset.core.ERDEntityAttribute": {
                   "~:euuid": "~u2fc5ab99-a875-4c4e-ada9-27d64c93254f",
-                  "~:seq": 2,
+                  "~:seq": 3,
                   "~:name": "Configuration",
                   "~:constraint": "optional",
                   "~:type": "transit",
@@ -104,28 +114,32 @@
                 }
               }
             ],
-            "~:type": "WEAK",
-            "~:configuration": {
-              "~:constraints": {
-                "~:unique": [
-                  []
-                ]
-              }
-            }
+            "~:height": 138
           }
         },
         "~ua0d304a7-afe3-4d9f-a2e1-35e174bb5d5b": {
           "~#neyho.eywa.dataset.core.ERDEntity": {
+            "~:name": "Dataset Entity",
+            "~:width": 150.765625,
+            "~:original": null,
+            "~:type": "STRONG",
             "~:euuid": "~ua0d304a7-afe3-4d9f-a2e1-35e174bb5d5b",
+            "~:clone": null,
             "~:position": {
               "~#neyho.eywa.modeling.core.Coordinate": {
                 "~:x": -880,
                 "~:y": 630
               }
             },
-            "~:width": 178.97463989257812,
-            "~:height": 152.7505645751953,
-            "~:name": "Dataset Entity",
+            "~:configuration": {
+              "~:constraints": {
+                "~:unique": [
+                  [
+                    "~u48631c43-1a57-4ed2-9d8e-57a286142a23"
+                  ]
+                ]
+              }
+            },
             "~:attributes": [
               {
                 "~#neyho.eywa.dataset.core.ERDEntityAttribute": {
@@ -207,30 +221,30 @@
                 }
               }
             ],
-            "~:type": "STRONG",
-            "~:configuration": {
-              "~:constraints": {
-                "~:unique": [
-                  [
-                    "~u48631c43-1a57-4ed2-9d8e-57a286142a23"
-                  ]
-                ]
-              }
-            }
+            "~:height": 170
           }
         },
         "~u191eb26a-c68f-46e5-84ec-1ee887d22adb": {
           "~#neyho.eywa.dataset.core.ERDEntity": {
+            "~:name": "Dataset Relation",
+            "~:width": 154.046875,
+            "~:original": null,
+            "~:type": "WEAK",
             "~:euuid": "~u191eb26a-c68f-46e5-84ec-1ee887d22adb",
+            "~:clone": null,
             "~:position": {
               "~#neyho.eywa.modeling.core.Coordinate": {
                 "~:x": -850,
                 "~:y": 1200
               }
             },
-            "~:width": 201.1736602783203,
-            "~:height": 152.7505645751953,
-            "~:name": "Dataset Relation",
+            "~:configuration": {
+              "~:constraints": {
+                "~:unique": [
+                  []
+                ]
+              }
+            },
             "~:attributes": [
               {
                 "~#neyho.eywa.dataset.core.ERDEntityAttribute": {
@@ -257,7 +271,7 @@
               {
                 "~#neyho.eywa.dataset.core.ERDEntityAttribute": {
                   "~:euuid": "~u4b5fab40-58e3-409e-a54a-fa8109bf26a7",
-                  "~:seq": 1,
+                  "~:seq": 2,
                   "~:name": "Path",
                   "~:constraint": "optional",
                   "~:type": "json",
@@ -268,7 +282,7 @@
               {
                 "~#neyho.eywa.dataset.core.ERDEntityAttribute": {
                   "~:euuid": "~u706e8f4b-189c-48c4-a4a1-3e191fe818e2",
-                  "~:seq": 2,
+                  "~:seq": 3,
                   "~:name": "From Label",
                   "~:constraint": "optional",
                   "~:type": "string",
@@ -279,7 +293,7 @@
               {
                 "~#neyho.eywa.dataset.core.ERDEntityAttribute": {
                   "~:euuid": "~u87042680-90d0-46a1-acf6-fc2be8d1047c",
-                  "~:seq": 3,
+                  "~:seq": 4,
                   "~:name": "To Label",
                   "~:constraint": "optional",
                   "~:type": "string",
@@ -290,7 +304,7 @@
               {
                 "~#neyho.eywa.dataset.core.ERDEntityAttribute": {
                   "~:euuid": "~u592e84b1-34ea-47e2-89e3-b78dc18263cf",
-                  "~:seq": 4,
+                  "~:seq": 5,
                   "~:name": "Cardinality",
                   "~:constraint": "mandatory",
                   "~:type": "enum",
@@ -327,28 +341,28 @@
                 }
               }
             ],
-            "~:type": "WEAK",
-            "~:configuration": {
-              "~:constraints": {
-                "~:unique": [
-                  []
-                ]
-              }
-            }
+            "~:height": 170
           }
         },
         "~u226f54b0-6af0-4c70-b090-d4fdf2579294": {
           "~#neyho.eywa.dataset.core.ERDEntity": {
+            "~:name": "Dataset Entity Attribute",
+            "~:width": 205.828125,
+            "~:original": null,
+            "~:type": "WEAK",
             "~:euuid": "~u226f54b0-6af0-4c70-b090-d4fdf2579294",
+            "~:clone": null,
             "~:position": {
               "~#neyho.eywa.modeling.core.Coordinate": {
                 "~:x": -560,
                 "~:y": 630
               }
             },
-            "~:width": 274.203125,
-            "~:height": 151,
-            "~:name": "Dataset Entity Attribute",
+            "~:configuration": {
+              "~:constraints": {
+                "~:unique": []
+              }
+            },
             "~:attributes": [
               {
                 "~#neyho.eywa.dataset.core.ERDEntityAttribute": {
@@ -505,12 +519,7 @@
                 }
               }
             ],
-            "~:type": "WEAK",
-            "~:configuration": {
-              "~:constraints": {
-                "~:unique": []
-              }
-            }
+            "~:height": 170
           }
         }
       },
@@ -609,7 +618,11 @@
             }
           }
         }
-      }
+      },
+      "~:configuration": null,
+      "~:clones": null,
+      "~:version": "1.0.0"
     }
-  }
+  },
+  "~:deployed": false
 }

@@ -1,8 +1,25 @@
 (ns neyho.eywa.dataset.sql.naming
   (:require
     [clojure.string :as str]
-    [neyho.eywa.dataset.core :as core]
-    [neyho.eywa.iam :refer [hash-uuid]]))
+    [neyho.eywa.dataset.core :as core]))
+
+(def alphabet (.toCharArray "0123456789abcdefghijklmnopqrstuvwxyz"))
+(def MASK 35)
+
+(defn hash-uuid [uuid]
+  (let [^long lo (.getLeastSignificantBits uuid)
+        ^long hi (.getMostSignificantBits uuid)
+        uuid-bytes (-> (java.nio.ByteBuffer/allocate 16)
+                       (.putLong hi)
+                       (.putLong lo)
+                       (.array))
+        builder (StringBuilder.)]
+    (.toString
+      (reduce
+        (fn [b by]
+          (.append b (get alphabet (bit-and by MASK))))
+        builder
+        uuid-bytes))))
 
 (def npattern #"[\s\_\-\.\$\[\]\{\}\#]+")
 
