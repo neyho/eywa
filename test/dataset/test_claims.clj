@@ -1,4 +1,4 @@
-(ns dataset-claims.test-claims
+(ns dataset.test-claims
   (:require
    [clojure.pprint :refer [pprint]]
    [clojure.string :as str]
@@ -7,7 +7,8 @@
    [neyho.eywa.dataset.core :as core]
    [neyho.eywa.dataset.uuids :as du]
    [neyho.eywa.db :refer [*db*]]
-   [neyho.eywa.lacinia :as lacinia]))
+   [neyho.eywa.lacinia :as lacinia]
+   [dataset.test-helpers :refer [make-entity make-relation add-test-attribute]]))
 
 (println "\n====================================")
 (println "DATASET CLAIMS SYSTEM TEST")
@@ -19,20 +20,20 @@
         model (core/map->ERDModel {})
 
         ;; Create Product entity with attributes
-        product-entity (-> (core/map->ERDEntity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                                 :name "Product"})
-                           (core/add-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000001"
+        product-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+                                         :name "Product"})
+                           (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000001"
                                                 :name "Name"
                                                 :type "string"
                                                 :constraint "mandatory"})
-                           (core/add-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000002"
+                           (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000002"
                                                 :name "Price"
                                                 :type "float"}))
 
         ;; Create Category entity with attributes
-        category-entity (-> (core/map->ERDEntity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000002"
-                                                  :name "Category"})
-                            (core/add-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000003"
+        category-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000002"
+                                          :name "Category"})
+                            (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000003"
                                                  :name "Name"
                                                  :type "string"
                                                  :constraint "mandatory"}))
@@ -45,7 +46,7 @@
         ;; Add relation
         model-with-relations (core/add-relation
                               model-with-entities
-                              (core/map->ERDRelation
+                              (make-relation
                                {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
                                 :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
                                 :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
@@ -65,23 +66,23 @@
         model (core/map->ERDModel {})
 
         ;; Create Product entity (SAME UUID as Dataset A) with attributes
-        product-entity (-> (core/map->ERDEntity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+        product-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000001"
                                                  :name "Product"})
-                           (core/add-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000001"
+                           (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000001"
                                                 :name "Name"
                                                 :type "string"
                                                 :constraint "mandatory"})
-                           (core/add-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000002"
+                           (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000002"
                                                 :name "Price"
                                                 :type "float"})
-                           (core/add-attribute {:euuid #uuid "bbbbbbbb-1111-1111-0000-000000000004"
+                           (add-test-attribute {:euuid #uuid "bbbbbbbb-1111-1111-0000-000000000004"
                                                 :name "Description"
                                                 :type "string"}))
 
         ;; Create Order entity with attributes
-        order-entity (-> (core/map->ERDEntity {:euuid #uuid "bbbbbbbb-1111-0000-0000-000000000003"
+        order-entity (-> (make-entity {:euuid #uuid "bbbbbbbb-1111-0000-0000-000000000003"
                                                :name "Order"})
-                         (core/add-attribute {:euuid #uuid "bbbbbbbb-1111-1111-0000-000000000005"
+                         (add-test-attribute {:euuid #uuid "bbbbbbbb-1111-1111-0000-000000000005"
                                               :name "OrderNumber"
                                               :type "string"
                                               :constraint "mandatory"}))
@@ -94,7 +95,7 @@
         ;; Add relation
         model-with-relations (core/add-relation
                               model-with-entities
-                              (core/map->ERDRelation
+                              (make-relation
                                {:euuid #uuid "bbbbbbbb-2222-0000-0000-000000000001"
                                 :from #uuid "bbbbbbbb-1111-0000-0000-000000000003"
                                 :to #uuid "aaaaaaaa-1111-0000-0000-000000000001"
@@ -114,9 +115,9 @@
         model (core/map->ERDModel {})
 
         ;; Create Product entity with DIFFERENT UUID but SAME NAME
-        product-entity (-> (core/map->ERDEntity {:euuid #uuid "cccccccc-1111-0000-0000-000000000001"
+        product-entity (-> (make-entity {:euuid #uuid "cccccccc-1111-0000-0000-000000000001"
                                                  :name "Product"})
-                           (core/add-attribute {:euuid #uuid "cccccccc-1111-1111-0000-000000000001"
+                           (add-test-attribute {:euuid #uuid "cccccccc-1111-1111-0000-000000000001"
                                                 :name "Code"
                                                 :type "string"}))
 
@@ -134,13 +135,13 @@
 (defn create-test-dataset-c []
   (let [model (core/map->ERDModel {})
         ;; Product with SAME UUID as Dataset A & B, but different attributes
-        product-entity (-> (core/map->ERDEntity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+        product-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000001"
                                                  :name "Product"})
-                           (core/add-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000001"
+                           (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000001"
                                                 :name "Name"
                                                 :type "string"
                                                 :constraint "mandatory"})
-                           (core/add-attribute {:euuid #uuid "cccccccc-1111-1111-0000-000000000010"
+                           (add-test-attribute {:euuid #uuid "cccccccc-1111-1111-0000-000000000010"
                                                 :name "SKU"
                                                 :type "string"
                                                 :constraint "mandatory"}))
@@ -156,20 +157,20 @@
 (defn create-test-dataset-d []
   (let [model (core/map->ERDModel {})
         ;; Share Product and Category from Dataset A
-        product-entity (-> (core/map->ERDEntity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+        product-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000001"
                                                  :name "Product"})
-                           (core/add-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000001"
+                           (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000001"
                                                 :name "Name"
                                                 :type "string"}))
-        category-entity (-> (core/map->ERDEntity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000002"
+        category-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000002"
                                                   :name "Category"})
-                            (core/add-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000003"
+                            (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000003"
                                                  :name "Name"
                                                  :type "string"}))
         ;; Add exclusive entity
-        supplier-entity (-> (core/map->ERDEntity {:euuid #uuid "dddddddd-1111-0000-0000-000000000001"
+        supplier-entity (-> (make-entity {:euuid #uuid "dddddddd-1111-0000-0000-000000000001"
                                                   :name "Supplier"})
-                            (core/add-attribute {:euuid #uuid "dddddddd-1111-1111-0000-000000000001"
+                            (add-test-attribute {:euuid #uuid "dddddddd-1111-1111-0000-000000000001"
                                                  :name "Name"
                                                  :type "string"}))
         model-with-entities (-> model
@@ -187,14 +188,14 @@
 (defn create-test-dataset-a-v2 []
   (let [model (core/map->ERDModel {})
         ;; Same UUID as Product, but renamed to "Item"
-        item-entity (-> (core/map->ERDEntity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+        item-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000001"
                                               :name "Item"})
-                        (core/add-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000001"
+                        (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000001"
                                              :name "Name"
                                              :type "string"}))
-        category-entity (-> (core/map->ERDEntity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000002"
+        category-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000002"
                                                   :name "Category"})
-                            (core/add-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000003"
+                            (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000003"
                                                  :name "Name"
                                                  :type "string"}))
         model-with-entities (-> model
@@ -211,14 +212,14 @@
 (defn create-test-dataset-e []
   (let [model (core/map->ERDModel {})
         ;; Share Product and Category
-        product-entity (-> (core/map->ERDEntity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+        product-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000001"
                                                  :name "Product"})
-                           (core/add-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000001"
+                           (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000001"
                                                 :name "Name"
                                                 :type "string"}))
-        category-entity (-> (core/map->ERDEntity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000002"
+        category-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000002"
                                                   :name "Category"})
-                            (core/add-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000003"
+                            (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000003"
                                                  :name "Name"
                                                  :type "string"}))
         model-with-entities (-> model
@@ -227,7 +228,7 @@
         ;; Share the SAME relation UUID as Dataset A
         model-with-relations (core/add-relation
                               model-with-entities
-                              (core/map->ERDRelation
+                              (make-relation
                                {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
                                 :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
                                 :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
@@ -561,9 +562,9 @@
 (defn create-order-v1 []
   "Create Order dataset v1 with just Order entity"
   (let [model (core/map->ERDModel {})
-        order-entity (-> (core/map->ERDEntity {:euuid #uuid "eeeeeeee-1111-0000-0000-000000000001"
+        order-entity (-> (make-entity {:euuid #uuid "eeeeeeee-1111-0000-0000-000000000001"
                                                :name "Order"})
-                         (core/add-attribute {:euuid #uuid "eeeeeeee-1111-1111-0000-000000000001"
+                         (add-test-attribute {:euuid #uuid "eeeeeeee-1111-1111-0000-000000000001"
                                               :name "OrderNumber"
                                               :type "string"
                                               :constraint "mandatory"}))
@@ -578,16 +579,16 @@
   "Create Order dataset v2 with Order + Shipment entities"
   (let [model (core/map->ERDModel {})
         ;; Re-include Order entity from v1
-        order-entity (-> (core/map->ERDEntity {:euuid #uuid "eeeeeeee-1111-0000-0000-000000000001"
+        order-entity (-> (make-entity {:euuid #uuid "eeeeeeee-1111-0000-0000-000000000001"
                                                :name "Order"})
-                         (core/add-attribute {:euuid #uuid "eeeeeeee-1111-1111-0000-000000000001"
+                         (add-test-attribute {:euuid #uuid "eeeeeeee-1111-1111-0000-000000000001"
                                               :name "OrderNumber"
                                               :type "string"
                                               :constraint "mandatory"}))
         ;; Add new Shipment entity
-        shipment-entity (-> (core/map->ERDEntity {:euuid #uuid "eeeeeeee-1111-0000-0000-000000000002"
+        shipment-entity (-> (make-entity {:euuid #uuid "eeeeeeee-1111-0000-0000-000000000002"
                                                   :name "Shipment"})
-                            (core/add-attribute {:euuid #uuid "eeeeeeee-1111-1111-0000-000000000003"
+                            (add-test-attribute {:euuid #uuid "eeeeeeee-1111-1111-0000-000000000003"
                                                  :name "TrackingCode"
                                                  :type "string"}))
         model-with-entities (-> model
@@ -707,15 +708,15 @@
 (defn create-lifecycle-v1 []
   "Initial version with TestUser and TestRole entities"
   (let [model (core/map->ERDModel {})
-        user-entity (-> (core/map->ERDEntity {:euuid #uuid "ffffffff-1111-0000-0000-000000000001"
+        user-entity (-> (make-entity {:euuid #uuid "ffffffff-1111-0000-0000-000000000001"
                                               :name "TestUser"})
-                        (core/add-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000001"
+                        (add-test-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000001"
                                              :name "Email"
                                              :type "string"
                                              :constraint "mandatory"}))
-        role-entity (-> (core/map->ERDEntity {:euuid #uuid "ffffffff-1111-0000-0000-000000000002"
+        role-entity (-> (make-entity {:euuid #uuid "ffffffff-1111-0000-0000-000000000002"
                                               :name "TestRole"})
-                        (core/add-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000002"
+                        (add-test-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000002"
                                              :name "Name"
                                              :type "string"}))
         model-with-entities (-> model
@@ -731,19 +732,19 @@
 (defn create-lifecycle-v2 []
   "Add TestPermission entity and relation"
   (let [model (core/map->ERDModel {})
-        user-entity (-> (core/map->ERDEntity {:euuid #uuid "ffffffff-1111-0000-0000-000000000001"
+        user-entity (-> (make-entity {:euuid #uuid "ffffffff-1111-0000-0000-000000000001"
                                               :name "TestUser"})
-                        (core/add-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000001"
+                        (add-test-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000001"
                                              :name "Email"
                                              :type "string"}))
-        role-entity (-> (core/map->ERDEntity {:euuid #uuid "ffffffff-1111-0000-0000-000000000002"
+        role-entity (-> (make-entity {:euuid #uuid "ffffffff-1111-0000-0000-000000000002"
                                               :name "TestRole"})
-                        (core/add-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000002"
+                        (add-test-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000002"
                                              :name "Name"
                                              :type "string"}))
-        permission-entity (-> (core/map->ERDEntity {:euuid #uuid "ffffffff-1111-0000-0000-000000000003"
+        permission-entity (-> (make-entity {:euuid #uuid "ffffffff-1111-0000-0000-000000000003"
                                                     :name "TestPermission"})
-                              (core/add-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000003"
+                              (add-test-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000003"
                                                    :name "Code"
                                                    :type "string"}))
         model-with-entities (-> model
@@ -752,7 +753,7 @@
                                 (core/add-entity permission-entity))
         model-with-relations (core/add-relation
                               model-with-entities
-                              (core/map->ERDRelation
+                              (make-relation
                                {:euuid #uuid "ffffffff-2222-0000-0000-000000000001"
                                 :from #uuid "ffffffff-1111-0000-0000-000000000002"
                                 :to #uuid "ffffffff-1111-0000-0000-000000000003"
@@ -769,14 +770,14 @@
 (defn create-lifecycle-v3 []
   "Remove TestRole, keep TestUser and TestPermission"
   (let [model (core/map->ERDModel {})
-        user-entity (-> (core/map->ERDEntity {:euuid #uuid "ffffffff-1111-0000-0000-000000000001"
+        user-entity (-> (make-entity {:euuid #uuid "ffffffff-1111-0000-0000-000000000001"
                                               :name "TestUser"})
-                        (core/add-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000001"
+                        (add-test-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000001"
                                              :name "Email"
                                              :type "string"}))
-        permission-entity (-> (core/map->ERDEntity {:euuid #uuid "ffffffff-1111-0000-0000-000000000003"
+        permission-entity (-> (make-entity {:euuid #uuid "ffffffff-1111-0000-0000-000000000003"
                                                     :name "TestPermission"})
-                              (core/add-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000003"
+                              (add-test-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000003"
                                                    :name "Code"
                                                    :type "string"}))
         model-with-entities (-> model
@@ -846,18 +847,18 @@
 (defn create-user-v1 []
   "Create User Service v1 with attributes: Email, Phone, FirstName"
   (let [model (core/map->ERDModel {})
-        user-entity (-> (core/map->ERDEntity {:euuid #uuid "99999999-1111-0000-0000-000000000001"
+        user-entity (-> (make-entity {:euuid #uuid "99999999-1111-0000-0000-000000000001"
                                               :name "Test9User"})
-                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000001"
+                        (add-test-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000001"
                                              :name "Email"
                                              :type "string"
                                              :constraint "mandatory"
                                              :active true})
-                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000002"
+                        (add-test-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000002"
                                              :name "Phone"
                                              :type "string"
                                              :active true})
-                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000003"
+                        (add-test-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000003"
                                              :name "FirstName"
                                              :type "string"
                                              :active true}))
@@ -872,20 +873,20 @@
 (defn create-user-v2 []
   "Create User Service v2 - removes Phone, adds Address. Attrs: Email, FirstName, Address"
   (let [model (core/map->ERDModel {})
-        user-entity (-> (core/map->ERDEntity {:euuid #uuid "99999999-1111-0000-0000-000000000001"
+        user-entity (-> (make-entity {:euuid #uuid "99999999-1111-0000-0000-000000000001"
                                               :name "Test9User"})
-                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000001"
+                        (add-test-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000001"
                                              :name "Email"
                                              :type "string"
                                              :constraint "mandatory"
                                              :active true})
                         ;; Phone REMOVED (not in v2)
-                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000003"
+                        (add-test-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000003"
                                              :name "FirstName"
                                              :type "string"
                                              :active true})
                         ;; Address ADDED (new in v2)
-                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000004"
+                        (add-test-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000004"
                                              :name "Address"
                                              :type "string"
                                              :active true}))
@@ -900,25 +901,25 @@
 (defn create-user-v3 []
   "Create User Service v3 - re-adds Phone, removes FirstName, adds LastName. Attrs: Email, Phone, Address, LastName"
   (let [model (core/map->ERDModel {})
-        user-entity (-> (core/map->ERDEntity {:euuid #uuid "99999999-1111-0000-0000-000000000001"
+        user-entity (-> (make-entity {:euuid #uuid "99999999-1111-0000-0000-000000000001"
                                               :name "Test9User"})
-                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000001"
+                        (add-test-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000001"
                                              :name "Email"
                                              :type "string"
                                              :constraint "mandatory"
                                              :active true})
                         ;; Phone RE-ADDED (was in v1, not in v2, back in v3)
-                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000002"
+                        (add-test-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000002"
                                              :name "Phone"
                                              :type "string"
                                              :active true})
                         ;; FirstName REMOVED (not in v3)
-                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000004"
+                        (add-test-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000004"
                                              :name "Address"
                                              :type "string"
                                              :active true})
                         ;; LastName ADDED (new in v3)
-                        (core/add-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000005"
+                        (add-test-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000005"
                                              :name "LastName"
                                              :type "string"
                                              :active true}))

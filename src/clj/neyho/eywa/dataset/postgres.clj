@@ -57,157 +57,15 @@
     (entity->table-name e)
     (throw (Exception. "Coulnd't find role entity"))))
 
-;;; Type Conversion Validation System
-
-(def type-families
-  "Groups of types that share the same underlying PostgreSQL storage type"
-  {:text #{"string" "avatar" "transit" "hashed"}
-   :json #{"json" "encrypted" "currency" "timeperiod"}
-   :numeric #{"int" "float"}
-   :reference #{"user" "group" "role"}
-   :temporal #{"timestamp"}
-   :boolean #{"boolean"}
-   :enum #{"enum"}})
-
-(defn get-type-family
-  "Returns the family keyword for a given type, or nil if not in a family"
-  [type]
-  (some (fn [[family types]]
-          (when (contains? types type)
-            family))
-        type-families))
-
-(defn same-family?
-  "Check if two types are in the same family (safe conversion)"
-  [from-type to-type]
-  (when-let [from-family (get-type-family from-type)]
-    (= from-family (get-type-family to-type))))
-
-(defn validate-type-conversion
-  "Validates a type conversion and returns:
-   - {:safe true} if conversion is always safe
-   - {:warning \"message\"} if conversion might lose data
-   - {:error \"message\" :type ::error-type :suggestion \"hint\"} if conversion is forbidden"
-  [from-type to-type]
-  (cond
-    ;; Same type - no conversion needed
-    (= from-type to-type)
-    {:safe true}
-
-    ;; SPECIFIC WARNINGS - These must come BEFORE general family checks
-
-    ;; float → int (precision loss warning)
-    (and (= from-type "float") (= to-type "int"))
-    {:warning "Converting float to int will truncate decimal values. Precision loss may occur."}
-
-    ;; Within reference family (risky - EIDs might not exist)
-    (and (contains? (:reference type-families) from-type)
-         (contains? (:reference type-families) to-type))
-    {:warning (format "Converting %s to %s assumes all entity IDs exist in the target table. Invalid references will violate foreign key constraints." from-type to-type)}
-
-    ;; timestamp → string (losing temporal semantics)
-    (and (= from-type "timestamp") (= to-type "string"))
-    {:warning "Converting timestamp to string will lose temporal semantics and indexing capabilities. Consider carefully if this is necessary."}
-
-    ;; encrypted → non-json (data is encrypted)
-    (and (= from-type "encrypted")
-         (not (contains? (:json type-families) to-type))
-         (not= to-type "string"))
-    {:error "Cannot convert encrypted data to non-JSON/string type: Data is encrypted and cannot be directly converted."
-     :type ::forbidden-conversion
-     :suggestion "Decrypt data first or keep as encrypted/json type."}
-
-    ;; GENERAL SAFE CONVERSIONS
-
-    ;; Any type can be converted to string (after specific checks above)
-    (= to-type "string")
-    {:safe true}
-
-    ;; Within same family - safe (same DB type) - after specific warnings
-    (same-family? from-type to-type)
-    {:safe true}
-
-    ;; int → float (widening)
-    (and (= from-type "int") (= to-type "float"))
-    {:safe true}
-
-    ;; enum → string (enum values are strings)
-    (and (= from-type "enum") (= to-type "string"))
-    {:safe true}
-
-    ;; RISKY CONVERSIONS (data-dependent)
-
-    ;; string → numeric (risky - depends on data)
-    (and (= from-type "string") (contains? #{"int" "float"} to-type))
-    {:warning (format "Converting string to %s requires all values to be valid numbers. Invalid values will cause the conversion to fail." to-type)}
-
-    ;; string → boolean (risky - depends on data)
-    (and (= from-type "string") (= to-type "boolean"))
-    {:warning "Converting string to boolean requires all values to be 't', 'f', 'true', 'false', 'yes', 'no', '1', '0'. Invalid values will cause the conversion to fail."}
-
-    ;; string → timestamp (risky - depends on data)
-    (and (= from-type "string") (= to-type "timestamp"))
-    {:warning "Converting string to timestamp requires all values to be valid timestamp formats. Invalid values will cause the conversion to fail."}
-
-    ;; string → json (lossy - invalid JSON becomes NULL)
-    (and (= from-type "string") (= to-type "json"))
-    {:warning "Converting string to json will set non-JSON values to NULL. This may result in data loss."}
-
-    ;; string → enum (risky - values must be in enum set)
-    (and (= from-type "string") (= to-type "enum"))
-    {:warning "Converting string to enum requires all values to be valid enum values. Invalid values will cause the conversion to fail."}
-
-    ;; FORBIDDEN: avatar → json (current implementation nulls everything)
-    (and (= from-type "avatar") (= to-type "json"))
-    {:error "Cannot convert avatar to json: Avatar URLs/data cannot be meaningfully converted to JSON."
-     :type ::forbidden-conversion
-     :suggestion "Convert to string first if you need to preserve the data, then manually transform to valid JSON if needed."}
-
-    ;; FORBIDDEN: json → numeric
-    (and (contains? (:json type-families) from-type)
-         (contains? #{"int" "float"} to-type))
-    {:error (format "Cannot convert %s to %s: No meaningful automatic conversion exists." from-type to-type)
-     :type ::forbidden-conversion
-     :suggestion "Extract numeric fields from JSON manually before converting."}
-
-    ;; FORBIDDEN: json → boolean
-    (and (contains? (:json type-families) from-type)
-         (= to-type "boolean"))
-    {:error (format "Cannot convert %s to boolean: No meaningful automatic conversion exists." from-type)
-     :type ::forbidden-conversion
-     :suggestion "Extract boolean fields from JSON manually before converting."}
-
-    ;; FORBIDDEN: timestamp → int (semantic mismatch)
-    (and (= from-type "timestamp") (= to-type "int"))
-    {:error "Cannot convert timestamp to int: Use explicit epoch conversion if needed."
-     :type ::forbidden-conversion
-     :suggestion "Create a new attribute and populate it with epoch timestamps explicitly."}
-
-    ;; FORBIDDEN: boolean → numeric
-    (and (= from-type "boolean") (contains? #{"int" "float"} to-type))
-    {:error (format "Cannot convert boolean to %s: Semantic mismatch." to-type)
-     :type ::forbidden-conversion
-     :suggestion "Convert to string first if you need '0'/'1' representation, or create explicit mapping logic."}
-
-    ;; FORBIDDEN: reference → non-reference (losing referential integrity)
-    (and (contains? (:reference type-families) from-type)
-         (not (contains? (:reference type-families) to-type))
-         (not= to-type "string"))
-    {:error (format "Cannot convert %s to %s: This would lose referential integrity." from-type to-type)
-     :type ::forbidden-conversion
-     :suggestion "Convert to string first if you need to preserve entity IDs."}
-
-    ;; Default: Unknown/unsupported conversion
-    :else
-    {:error (format "Unsupported type conversion from %s to %s." from-type to-type)
-     :type ::unsupported-conversion
-     :suggestion "This conversion path has not been validated. Please review the type compatibility matrix."}))
+;;; Type Conversion Validation (Backend-specific wrapper)
+;;; The core validation logic is in neyho.eywa.dataset.core (shared with frontend)
 
 (defn check-type-conversion!
-  "Validates type conversion and throws exception if forbidden, logs warning if risky.
-   Returns true if conversion can proceed."
+  "Backend-specific wrapper that validates type conversion and throws exception if forbidden.
+   The actual validation logic is in neyho.eywa.dataset.core/validate-type-conversion
+   which is shared between frontend and backend."
   [entity attribute old-type new-type]
-  (let [validation (validate-type-conversion old-type new-type)]
+  (let [validation (core/validate-type-conversion old-type new-type)]
     (cond
       (:safe validation)
       true
@@ -231,7 +89,7 @@
                   old-type
                   new-type
                   (:error validation))
-          {:type (or (:type validation) ::forbidden-conversion)
+          {:type (or (:type validation) ::core/forbidden-conversion)
            :entity (:name entity)
            :attribute (:name attribute)
            :from-type old-type
@@ -248,7 +106,7 @@
                   new-type)
           {:validation validation})))))
 
-;;; End Type Conversion Validation System
+;;; End Type Conversion Validation
 
 (defn type->ddl
   "Converts type to DDL syntax"
@@ -556,20 +414,20 @@
                       (case type
                         "enum" new-enum-name
                         (type->ddl type)))
-                      (= "int" type) (str " using(trim(" column ")::integer)")
-                      (= "float" type) (str " using(trim(" column ")::float)")
-                      (= "string" type) (str " using(" column "::text)")
+                    (= "int" type) (str " using(trim(" column ")::integer)")
+                    (= "float" type) (str " using(trim(" column ")::float)")
+                    (= "string" type) (str " using(" column "::text)")
                    ; (= "json" type) (str " using(" column "::jsonb)")
-                      (= "json" type) (str " using\n case when "
-                                           column " ~ '^\\s*\\{.*\\}\\s*$' OR "
-                                           column " ~ '^\\s*\\[.*\\]\\s*$'\nthen " column
-                                           "::jsonb\nelse NULL end;")
-                      (= "transit" type) (str " using(" column "::text)")
-                      (= "avatar" type) (str " using(" column "::text)")
-                      (= "encrypted" type) (str " using(" column "::text)")
-                      (= "hashed" type) (str " using(" column "::text)")
-                      (= "boolean" type) (str " using(trim(" column ")::boolean)")
-                      (= "enum" type) (str " using(" column ")::" old-enum-name)))))
+                    (= "json" type) (str " using\n case when "
+                                         column " ~ '^\\s*\\{.*\\}\\s*$' OR "
+                                         column " ~ '^\\s*\\[.*\\]\\s*$'\nthen " column
+                                         "::jsonb\nelse NULL end;")
+                    (= "transit" type) (str " using(" column "::text)")
+                    (= "avatar" type) (str " using(" column "::text)")
+                    (= "encrypted" type) (str " using(" column "::text)")
+                    (= "hashed" type) (str " using(" column "::text)")
+                    (= "boolean" type) (str " using(trim(" column ")::boolean)")
+                    (= "enum" type) (str " using(" column ")::" old-enum-name)))))
             ;; If attribute was previously enum and now it is not enum
             ;; than delete enum type
             (= dt "enum")

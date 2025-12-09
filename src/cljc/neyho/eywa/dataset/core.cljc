@@ -1,10 +1,10 @@
 (ns neyho.eywa.dataset.core
   (:require
    ;; DEPRECATED - only for version 1
-    #?(:cljs
-       [helix.core :refer [create-context]])
-    clojure.data
-    clojure.set))
+   #?(:cljs
+      [helix.core :refer [create-context]])
+   clojure.data
+   clojure.set))
 
 ;; DEPRECATED - only for version 1
 #?(:cljs (defonce ^:dynamic *dataset* (create-context)))
@@ -28,6 +28,289 @@
 (defn generate-uuid []
   #?(:clj (java.util.UUID/randomUUID)
      :cljs (random-uuid)))
+
+;;; Type Conversion Validation System (Shared Frontend/Backend)
+
+(def type-families
+  "Groups of types that share the same underlying database storage type.
+   Used to determine safe type conversions."
+  {:text #{"string" "avatar" "transit" "hashed"}
+   :json #{"json" "encrypted" "currency" "timeperiod"}
+   :numeric #{"int" "float"}
+   :reference #{"user" "group" "role"}
+   :temporal #{"timestamp"}
+   :boolean #{"boolean"}
+   :enum #{"enum"}})
+
+(defn get-type-family
+  "Returns the family keyword for a given type, or nil if not in a family"
+  [type]
+  (some (fn [[family types]]
+          (when (contains? types type)
+            family))
+        type-families))
+
+(defn same-family?
+  "Check if two types are in the same family (safe conversion)"
+  [from-type to-type]
+  (when-let [from-family (get-type-family from-type)]
+    (= from-family (get-type-family to-type))))
+
+(defn validate-type-conversion
+  "Validates a type conversion and returns:
+   - {:safe true} if conversion is always safe
+   - {:warning \"message\"} if conversion might lose data
+   - {:error \"message\" :type ::error-type :suggestion \"hint\"} if conversion is forbidden
+
+   This function is shared between frontend and backend to ensure consistent validation."
+  [from-type to-type]
+  (cond
+    ;; Same type - no conversion needed
+    (= from-type to-type)
+    {:safe true}
+
+    ;; SPECIFIC WARNINGS - These must come BEFORE general family checks
+
+    ;; float → int (precision loss warning)
+    (and (= from-type "float") (= to-type "int"))
+    {:warning "Converting float to int will truncate decimal values. Precision loss may occur."}
+
+    ;; Within reference family (risky - EIDs might not exist)
+    (and (contains? (:reference type-families) from-type)
+         (contains? (:reference type-families) to-type))
+    {:warning (str "Converting " from-type " to " to-type " assumes all entity IDs exist in the target table. Invalid references will violate foreign key constraints.")}
+
+    ;; timestamp → string (losing temporal semantics)
+    (and (= from-type "timestamp") (= to-type "string"))
+    {:warning "Converting timestamp to string will lose temporal semantics and indexing capabilities. Consider carefully if this is necessary."}
+
+    ;; encrypted → non-json (data is encrypted)
+    (and (= from-type "encrypted")
+         (not (contains? (:json type-families) to-type))
+         (not= to-type "string"))
+    {:error "Cannot convert encrypted data to non-JSON/string type: Data is encrypted and cannot be directly converted."
+     :type ::forbidden-conversion
+     :suggestion "Decrypt data first or keep as encrypted/json type."}
+
+    ;; GENERAL SAFE CONVERSIONS
+
+    ;; Any type can be converted to string (after specific checks above)
+    (= to-type "string")
+    {:safe true}
+
+    ;; Within same family - safe (same DB type) - after specific warnings
+    (same-family? from-type to-type)
+    {:safe true}
+
+    ;; int → float (widening)
+    (and (= from-type "int") (= to-type "float"))
+    {:safe true}
+
+    ;; enum → string (enum values are strings)
+    (and (= from-type "enum") (= to-type "string"))
+    {:safe true}
+
+    ;; RISKY CONVERSIONS (data-dependent)
+
+    ;; string → numeric (risky - depends on data)
+    (and (= from-type "string") (contains? #{"int" "float"} to-type))
+    {:warning (str "Converting string to " to-type " requires all values to be valid numbers. Invalid values will cause the conversion to fail.")}
+
+    ;; string → boolean (risky - depends on data)
+    (and (= from-type "string") (= to-type "boolean"))
+    {:warning "Converting string to boolean requires all values to be 't', 'f', 'true', 'false', 'yes', 'no', '1', '0'. Invalid values will cause the conversion to fail."}
+
+    ;; string → timestamp (risky - depends on data)
+    (and (= from-type "string") (= to-type "timestamp"))
+    {:warning "Converting string to timestamp requires all values to be valid timestamp formats. Invalid values will cause the conversion to fail."}
+
+    ;; string → json (lossy - invalid JSON becomes NULL)
+    (and (= from-type "string") (= to-type "json"))
+    {:warning "Converting string to json will set non-JSON values to NULL. This may result in data loss."}
+
+    ;; string → enum (risky - values must be in enum set)
+    (and (= from-type "string") (= to-type "enum"))
+    {:warning "Converting string to enum requires all values to be valid enum values. Invalid values will cause the conversion to fail."}
+
+    ;; FORBIDDEN: avatar → json (current implementation nulls everything)
+    (and (= from-type "avatar") (= to-type "json"))
+    {:error "Cannot convert avatar to json: Avatar URLs/data cannot be meaningfully converted to JSON."
+     :type ::forbidden-conversion
+     :suggestion "Convert to string first if you need to preserve the data, then manually transform to valid JSON if needed."}
+
+    ;; FORBIDDEN: json → numeric
+    (and (contains? (:json type-families) from-type)
+         (contains? #{"int" "float"} to-type))
+    {:error (str "Cannot convert " from-type " to " to-type ": No meaningful automatic conversion exists.")
+     :type ::forbidden-conversion
+     :suggestion "Extract numeric fields from JSON manually before converting."}
+
+    ;; FORBIDDEN: json → boolean
+    (and (contains? (:json type-families) from-type)
+         (= to-type "boolean"))
+    {:error (str "Cannot convert " from-type " to boolean: No meaningful automatic conversion exists.")
+     :type ::forbidden-conversion
+     :suggestion "Extract boolean fields from JSON manually before converting."}
+
+    ;; FORBIDDEN: timestamp → int (semantic mismatch)
+    (and (= from-type "timestamp") (= to-type "int"))
+    {:error "Cannot convert timestamp to int: Use explicit epoch conversion if needed."
+     :type ::forbidden-conversion
+     :suggestion "Create a new attribute and populate it with epoch timestamps explicitly."}
+
+    ;; FORBIDDEN: boolean → numeric
+    (and (= from-type "boolean") (contains? #{"int" "float"} to-type))
+    {:error (str "Cannot convert boolean to " to-type ": Semantic mismatch.")
+     :type ::forbidden-conversion
+     :suggestion "Convert to string first if you need '0'/'1' representation, or create explicit mapping logic."}
+
+    ;; FORBIDDEN: reference → non-reference (losing referential integrity)
+    (and (contains? (:reference type-families) from-type)
+         (not (contains? (:reference type-families) to-type))
+         (not= to-type "string"))
+    {:error (str "Cannot convert " from-type " to " to-type ": This would lose referential integrity.")
+     :type ::forbidden-conversion
+     :suggestion "Convert to string first if you need to preserve entity IDs."}
+
+    ;; Default: Unknown/unsupported conversion
+    :else
+    {:error (str "Unsupported type conversion from " from-type " to " to-type ".")
+     :type ::unsupported-conversion
+     :suggestion "This conversion path has not been validated. Please review the type compatibility matrix."}))
+
+(defn can-convert-type?
+  "Returns true if the type conversion is allowed (safe or warning), false if forbidden.
+   Use this for quick yes/no checks. For detailed info, use validate-type-conversion."
+  [from-type to-type]
+  (let [result (validate-type-conversion from-type to-type)]
+    (not (:error result))))
+
+(defn get-conversion-level
+  "Returns the risk level of a type conversion: :safe, :warning, or :error"
+  [from-type to-type]
+  (let [result (validate-type-conversion from-type to-type)]
+    (cond
+      (:error result) :error
+      (:warning result) :warning
+      :else :safe)))
+
+(def all-types
+  "All available attribute types in the system"
+  ["string" "avatar" "transit" "hashed" ;; text family
+   "json" "encrypted" "currency" "timeperiod" ;; json family
+   "int" "float" ;; numeric family
+   "user" "group" "role" ;; reference family
+   "timestamp" ;; temporal
+   "boolean" ;; boolean
+   "enum"]) ;; enum
+
+(defn get-allowed-conversions
+  "Returns a map of all possible target types grouped by safety level.
+
+   Returns:
+   {:safe [types that are safe to convert to]
+    :warning [types that might work but are risky]
+    :forbidden [types that are blocked]}
+
+   Useful for populating UI dropdowns with visual indicators.
+
+   Example:
+   (get-allowed-conversions \"avatar\")
+   => {:safe [\"string\" \"transit\" \"hashed\" \"avatar\"]
+       :warning []
+       :forbidden [\"json\" \"int\" \"float\" ...]}"
+  [from-type]
+  (reduce
+   (fn [acc to-type]
+     (let [level (get-conversion-level from-type to-type)]
+       (update acc level (fnil conj []) to-type)))
+   {:safe []
+    :warning []
+    :forbidden []}
+   all-types))
+
+(defn get-convertible-types
+  "Returns only the types that CAN be converted to (safe or warning, but not forbidden).
+   This is useful for filtering dropdown options to show only valid choices.
+
+   Options:
+   - :include-warnings? true (default) - includes both safe and risky conversions
+   - :include-warnings? false - only safe conversions
+
+   Example:
+   (get-convertible-types \"avatar\")
+   => [\"string\" \"transit\" \"hashed\" \"avatar\"]
+
+   (get-convertible-types \"avatar\" :include-warnings? false)
+   => [\"string\" \"transit\" \"hashed\" \"avatar\"]"
+  ([from-type]
+   (get-convertible-types from-type {:include-warnings? true}))
+  ([from-type {:keys [include-warnings?]
+               :or {include-warnings? true}}]
+   (let [allowed (get-allowed-conversions from-type)]
+     (if include-warnings?
+       (concat (:safe allowed) (:warning allowed))
+       (:safe allowed)))))
+
+(defn get-type-conversion-info
+  "Returns detailed information about a type conversion for UI display.
+
+   Returns:
+   {:level :safe|:warning|:error
+    :allowed? true|false
+    :badge-color \"green\"|\"yellow\"|\"red\"
+    :icon \"✓\"|\"⚠\"|\"✗\"
+    :message \"Human readable message\"
+    :warning \"Warning message\" (if level is :warning)
+    :error \"Error message\" (if level is :error)
+    :suggestion \"Suggestion for forbidden conversions\" (if level is :error)}
+
+   Example:
+   (get-type-conversion-info \"string\" \"int\")
+   => {:level :warning
+       :allowed? true
+       :badge-color \"yellow\"
+       :icon \"⚠\"
+       :warning \"Converting string to int requires all values...\"
+       :message \"Converting string to int requires all values...\"}
+
+   (get-type-conversion-info \"avatar\" \"json\")
+   => {:level :error
+       :allowed? false
+       :badge-color \"red\"
+       :icon \"✗\"
+       :error \"Cannot convert avatar to json...\"
+       :message \"Cannot convert avatar to json...\"
+       :suggestion \"Convert to string first...\"}"
+  [from-type to-type]
+  (let [validation (validate-type-conversion from-type to-type)
+        level (get-conversion-level from-type to-type)]
+    (case level
+      :safe
+      {:level :safe
+       :allowed? true
+       :badge-color "green"
+       :icon "✓"
+       :message (str "Safe conversion from " from-type " to " to-type)}
+
+      :warning
+      {:level :warning
+       :allowed? true
+       :badge-color "yellow"
+       :icon "⚠"
+       :warning (:warning validation)
+       :message (:warning validation)}
+
+      :error
+      {:level :error
+       :allowed? false
+       :badge-color "red"
+       :icon "✗"
+       :error (:error validation)
+       :message (:error validation)
+       :suggestion (:suggestion validation)})))
+
+;;; End Type Conversion Validation System
 
 (defprotocol EntityConstraintProtocol
   (set-entity-unique-constraints [this constraints])
@@ -65,12 +348,12 @@
   (get-entity-unique-constraints [this]
     (let [active-attributes (set (map :euuid (filter :active (:attributes this))))]
       (reduce
-        (fn [r constraint-group]
-          (if-some [filtered-group (not-empty (filter active-attributes constraint-group))]
-            (conj r (vec filtered-group))
-            r))
-        []
-        (get-in this [:configuration :constraints :unique]))))
+       (fn [r constraint-group]
+         (if-some [filtered-group (not-empty (filter active-attributes constraint-group))]
+           (conj r (vec filtered-group))
+           r))
+       []
+       (get-in this [:configuration :constraints :unique]))))
   ;;
   ERDEntityAttributeProtocol
   (generate-attribute-id [_]
@@ -85,24 +368,24 @@
                   (generate-attribute-id this))
           entity (update this :attributes (fnil conj [])
                          (assoc attribute
-                           :euuid euuid
-                           :seq (count attributes)))]
+                                :euuid euuid
+                                :seq (count attributes)))]
       (if (= "unique" (:constraint attribute))
         (update-entity-unique-constraints
-          entity
-          (fnil
-            (fn [current]
-              (update current 0 (comp distinct conj) euuid))
-            [[]]))
+         entity
+         (fnil
+          (fn [current]
+            (update current 0 (comp distinct conj) euuid))
+          [[]]))
         entity)))
   (get-attribute [{:keys [attributes]} euuid]
     (if-let [attribute (some #(when (= euuid (:euuid %)) %) attributes)]
       attribute
       (throw
-        (ex-info
-          (str "Couldn't find attribute with euuid " euuid)
-          {:euuid euuid
-           :euuids (map :euuid attributes)}))))
+       (ex-info
+        (str "Couldn't find attribute with euuid " euuid)
+        {:euuid euuid
+         :euuids (map :euuid attributes)}))))
   (set-attribute [{:keys [attributes]
                    :as this}
                   {ct :constraint
@@ -111,24 +394,24 @@
     (let [p (.indexOf (mapv :euuid attributes) (:euuid attribute))]
       (if (neg? p)
         (throw
-          (ex-info
-            "Attribute not found"
-            {:attribute attribute
-             :attributes attributes}))
+         (ex-info
+          "Attribute not found"
+          {:attribute attribute
+           :attributes attributes}))
         (let [{pt :constraint} (get attributes p)
               entity (assoc-in this [:attributes p] attribute)]
           (cond
             ;; If once was unique and currently isn't
             (and (= "unique" pt) (not= "unique" ct))
             (update-entity-unique-constraints
-              entity
-              (fn [constraints]
-                (mapv #(vec (remove #{euuid} %)) constraints)))
+             entity
+             (fn [constraints]
+               (mapv #(vec (remove #{euuid} %)) constraints)))
             ;; If now is unique and previously wasn't
             (and (= "unique" ct) (not= "unique" pt))
             (update-entity-unique-constraints
-              entity
-              (fnil #(update % 0 conj euuid) [[]]))
+             entity
+             (fnil #(update % 0 conj euuid) [[]]))
             ;; Otherwise return changed entity
             :else entity)))))
   (update-attribute [{:keys [attributes]
@@ -142,14 +425,14 @@
           ;; If once was unique and currently isn't
           (and (= "unique" pt) (not= "unique" ct))
           (update-entity-unique-constraints
-            entity
-            (fn [constraints]
-              (mapv #(vec (remove #{euuid} %)) constraints)))
+           entity
+           (fn [constraints]
+             (mapv #(vec (remove #{euuid} %)) constraints)))
           ;; If now is unique and previously wasn't
           (and (= "unique" ct) (not= "unique" pt))
           (update-entity-unique-constraints
-            entity
-            (fnil #(update % 0 conj euuid) [[]]))
+           entity
+           (fnil #(update % 0 conj euuid) [[]]))
           ;; Otherwise return changed entity
           :else entity))
       (throw (ex-info (str "Couldn't find attribute with euuid " euuid)
@@ -158,25 +441,25 @@
   (remove-attribute [{:keys [attributes]
                       :as this} {euuid :euuid}]
     (->
-      this
-      (assoc :attributes
-        (vec
-          (keep-indexed
-            (fn [idx a] (assoc a :seq idx))
-            (remove #(= euuid (:euuid %)) attributes))))
-      (update update-entity-unique-constraints
-              (fn [unique-bindings]
-                (reduce
-                  (fn [r group]
-                    (let [group' (vec
-                                   (remove
-                                     (some-fn
-                                       #{euuid}
-                                       string?)
-                                     group))]
-                      (if (empty? group') r (conj r group'))))
-                  []
-                  unique-bindings))))))
+     this
+     (assoc :attributes
+            (vec
+             (keep-indexed
+              (fn [idx a] (assoc a :seq idx))
+              (remove #(= euuid (:euuid %)) attributes))))
+     (update update-entity-unique-constraints
+             (fn [unique-bindings]
+               (reduce
+                (fn [r group]
+                  (let [group' (vec
+                                (remove
+                                 (some-fn
+                                  #{euuid}
+                                  string?)
+                                 group))]
+                    (if (empty? group') r (conj r group'))))
+                []
+                unique-bindings))))))
 
 (defprotocol ERDModelActions
   (generate-entity-id [this] "Returns unique id")
@@ -294,21 +577,21 @@
   (with-meta
     (-> relation
         (clojure.set/rename-keys
-          {:from :to
-           :from-label :to-label
-           :to :from
-           :to-label :from-label})
+         {:from :to
+          :from-label :to-label
+          :to :from
+          :to-label :from-label})
         (assoc :cardinality
-          (case (:cardinality relation)
-            "o2m" "m2o"
-            "o2o" "o2o"
-            "m2m" "m2m"
-            "m2o" "o2m"
-            relation))
+               (case (:cardinality relation)
+                 "o2m" "m2o"
+                 "o2o" "o2o"
+                 "m2m" "m2m"
+                 "m2o" "o2m"
+                 relation))
         map->ERDRelation)
     (merge
-      (meta relation)
-      {:dataset.relation/inverted? true})))
+     (meta relation)
+     {:dataset.relation/inverted? true})))
 
 (defn inverted-relation? [relation] (:dataset.relation/inverted? (meta relation)))
 
@@ -354,13 +637,13 @@
              (get-in relation2 [:to :euuid]))
         [relation1 (invert-relation relation2)]
         (throw
-          (ex-info
-            "Cannot align relations that connect different entities"
-            {:relations [relation1 relation2]}))))
+         (ex-info
+          "Cannot align relations that connect different entities"
+          {:relations [relation1 relation2]}))))
     (throw
-      (ex-info
-        "Cannot align different relations"
-        {:relations [relation1 relation2]}))))
+     (ex-info
+      "Cannot align different relations"
+      {:relations [relation1 relation2]}))))
 
 (defn same-relations?
   "Function returns true if two relations are the same, by comparing
@@ -369,16 +652,16 @@
   (if (= (:euuid relation1) (:euuid relation2))
     (let [[relation1' relation2' relation2'']
           (map
-            #(->
-               %
-               (select-keys [:to-label :from-label :cardinality :to :from])
-               (update :to :euuid)
-               (update :from :euuid))
-            [relation1 relation2 (invert-relation relation2)])
+           #(->
+             %
+             (select-keys [:to-label :from-label :cardinality :to :from])
+             (update :to :euuid)
+             (update :from :euuid))
+           [relation1 relation2 (invert-relation relation2)])
           same? (boolean
-                  (or
-                    (= relation1' relation2')
-                    (= relation1' relation2'')))]
+                 (or
+                  (= relation1' relation2')
+                  (= relation1' relation2'')))]
       same?)
     false))
 
@@ -397,66 +680,66 @@
                                           (set (keys attrs2-by-id)))
         ;; Merge attributes: model2 wins for properties, but accumulate all
         merged-attrs (vec
-                       (for [attr-uuid all-attr-uuids]
-                         (if-let [attr2 (get attrs2-by-id attr-uuid)]
+                      (for [attr-uuid all-attr-uuids]
+                        (if-let [attr2 (get attrs2-by-id attr-uuid)]
                           ;; Attribute in model2: use it with :active true
-                           (assoc attr2 :active true)
+                          (assoc attr2 :active true)
                           ;; Attribute only in model1: keep it with :active false
-                           (assoc (get attrs1-by-id attr-uuid) :active false))))]
+                          (assoc (get attrs1-by-id attr-uuid) :active false))))]
     ;; Return entity2 as base with merged attributes
     (assoc entity2 :attributes merged-attrs)))
 
 (defn join-models [model1 model2]
   (->
-    model1
+   model1
    ;; Handled by ensure active attributes
-    (update :configuration deep-merge (:configuration model2))
-    (update :clones deep-merge (:clones model2))
+   (update :configuration deep-merge (:configuration model2))
+   (update :clones deep-merge (:clones model2))
    ;; Ensure active attributes
-    (as-> joined-model
+   (as-> joined-model
          ;; Merge entities: handle both claimed-by AND attributes
-          (reduce
-            (fn [m {:keys [euuid]
-                    :as entity}]
-              (let [entity1 (get-entity model1 euuid)
-                    entity2 (get-entity model2 euuid)
-                    claims-1 (get entity1 :claimed-by #{})
-                    claims-2 (get entity2 :claimed-by #{})
-                    claims (clojure.set/union claims-1 claims-2)
+         (reduce
+          (fn [m {:keys [euuid]
+                  :as entity}]
+            (let [entity1 (get-entity model1 euuid)
+                  entity2 (get-entity model2 euuid)
+                  claims-1 (get entity1 :claimed-by #{})
+                  claims-2 (get entity2 :claimed-by #{})
+                  claims (clojure.set/union claims-1 claims-2)
                   ;; Entity is active if present in model2 (last deployment wins)
-                    entity-active? (some? entity2)
+                  entity-active? (some? entity2)
                   ;; Merge attributes if both entities exist
-                    merged-entity (if (and entity1 entity2)
-                                    (merge-entity-attributes entity1 entity2)
-                                    entity)]
-                (set-entity m (assoc merged-entity
-                                :claimed-by claims
-                                :active entity-active?))))
-            joined-model
-            (mapcat get-entities [model1 model2]))
+                  merged-entity (if (and entity1 entity2)
+                                  (merge-entity-attributes entity1 entity2)
+                                  entity)]
+              (set-entity m (assoc merged-entity
+                                   :claimed-by claims
+                                   :active entity-active?))))
+          joined-model
+          (mapcat get-entities [model1 model2]))
      ;; Merge relations: handle claimed-by AND active
-      (reduce
-        (fn [m {:keys [euuid]
-                :as relation}]
-          (let [relation1 (get-relation model1 euuid)
-                relation2 (get-relation model2 euuid)
-                claims-1 (get relation1 :claimed-by #{})
-                claims-2 (get relation2 :claimed-by #{})
-                claims (clojure.set/union claims-1 claims-2)
+     (reduce
+      (fn [m {:keys [euuid]
+              :as relation}]
+        (let [relation1 (get-relation model1 euuid)
+              relation2 (get-relation model2 euuid)
+              claims-1 (get relation1 :claimed-by #{})
+              claims-2 (get relation2 :claimed-by #{})
+              claims (clojure.set/union claims-1 claims-2)
               ;; Relation is active if present in model2 (last deployment wins)
-                relation-active? (some? relation2)]
-            (set-relation m (assoc relation
-                              :claimed-by claims
-                              :active relation-active?))))
-        joined-model
-        (mapcat get-relations [model1 model2])))))
+              relation-active? (some? relation2)]
+          (set-relation m (assoc relation
+                                 :claimed-by claims
+                                 :active relation-active?))))
+      joined-model
+      (mapcat get-relations [model1 model2])))))
 
 (defn disjoin-model [model1 model2]
   (reduce
-    (fn [final entity]
-      (remove-entity final entity))
-    model1
-    (get-entities model2)))
+   (fn [final entity]
+     (remove-entity final entity))
+   model1
+   (get-entities model2)))
 
 ;; Ownership tracking functions
 (defn add-claim
@@ -481,15 +764,15 @@
   ([global-model new-model version-uuid]
    (as-> global-model gm
      (reduce
-       (fn [gm entity]
-         (add-claim gm (:euuid entity) version-uuid))
-       gm
-       (get-entities new-model))
+      (fn [gm entity]
+        (add-claim gm (:euuid entity) version-uuid))
+      gm
+      (get-entities new-model))
      (reduce
-       (fn [gm relation]
-         (add-claim gm (:euuid relation) version-uuid))
-       gm
-       (get-relations new-model)))))
+      (fn [gm relation]
+        (add-claim gm (:euuid relation) version-uuid))
+      gm
+      (get-relations new-model)))))
 
 (defn remove-claim
   "Removes version-uuid from the :claimed-by set of an entity or relation"
@@ -520,60 +803,60 @@
   (let [;; Remove claims from entities
         updated-entities
         (reduce-kv
-          (fn [entities entity-uuid entity]
-            (let [remaining-claims (clojure.set/difference
-                                     (get entity :claimed-by #{})
-                                     version-uuids)
-                  active? (not-empty remaining-claims)]
-              (assoc entities entity-uuid
-                     (assoc entity
-                       :claimed-by remaining-claims
-                       :active active?))))
-          {}
-          (:entities model))
+         (fn [entities entity-uuid entity]
+           (let [remaining-claims (clojure.set/difference
+                                   (get entity :claimed-by #{})
+                                   version-uuids)
+                 active? (not-empty remaining-claims)]
+             (assoc entities entity-uuid
+                    (assoc entity
+                           :claimed-by remaining-claims
+                           :active active?))))
+         {}
+         (:entities model))
         ;; Remove claims from relations
         updated-relations
         (reduce-kv
-          (fn [relations relation-uuid relation]
-            (let [remaining-claims (clojure.set/difference
-                                     (get relation :claimed-by #{})
-                                     version-uuids)
-                  active? (not-empty remaining-claims)]
-              (assoc relations relation-uuid
-                     (assoc relation
-                       :claimed-by remaining-claims
-                       :active active?))))
-          {}
-          (:relations model))]
+         (fn [relations relation-uuid relation]
+           (let [remaining-claims (clojure.set/difference
+                                   (get relation :claimed-by #{})
+                                   version-uuids)
+                 active? (not-empty remaining-claims)]
+             (assoc relations relation-uuid
+                    (assoc relation
+                           :claimed-by remaining-claims
+                           :active active?))))
+         {}
+         (:relations model))]
     (assoc model
-      :entities updated-entities
-      :relations updated-relations)))
+           :entities updated-entities
+           :relations updated-relations)))
 
 (defn find-exclusive-entities
   "Returns entities that are ONLY claimed by the provided version-uuids"
   [model version-uuids]
   (let [version-set (set version-uuids)]
     (filter
-      (fn [entity]
-        (let [claims (get entity :claimed-by #{})]
+     (fn [entity]
+       (let [claims (get entity :claimed-by #{})]
           ;; Skip entities without claims (legacy system entities)
           ;; Exclusive if all claims are within version-uuids
-          (and (not-empty claims)
-               (empty? (clojure.set/difference claims version-set)))))
-      (get-entities model))))
+         (and (not-empty claims)
+              (empty? (clojure.set/difference claims version-set)))))
+     (get-entities model))))
 
 (defn find-exclusive-relations
   "Returns relations that are ONLY claimed by the provided version-uuids"
   [model version-uuids]
   (let [version-set (set version-uuids)]
     (filter
-      (fn [relation]
-        (let [claims (get relation :claimed-by #{})]
+     (fn [relation]
+       (let [claims (get relation :claimed-by #{})]
           ;; Skip relations without claims (legacy system relations)
           ;; Exclusive if all claims are within version-uuids
-          (and (not-empty claims)
-               (empty? (clojure.set/difference claims version-set)))))
-      (get-relations model))))
+         (and (not-empty claims)
+              (empty? (clojure.set/difference claims version-set)))))
+     (get-relations model))))
 
 (defn ensure-active-flags
   "Takes a model with :claimed-by sets and returns a model with :active flags AND :claimed-by.
@@ -588,30 +871,30 @@
    (let [;; Process entities: set :active from :claimed-by, KEEP :claimed-by
          updated-entities
          (reduce-kv
-           (fn [entities entity-uuid entity]
-             (let [claims (get entity :claimed-by #{})
-                   active? (if current-version-uuid
-                             (contains? claims current-version-uuid)
-                             (boolean (not-empty claims)))]
-               (assoc entities entity-uuid
-                      (assoc entity :active active?))))
-           {}
-           (:entities model))
+          (fn [entities entity-uuid entity]
+            (let [claims (get entity :claimed-by #{})
+                  active? (if current-version-uuid
+                            (contains? claims current-version-uuid)
+                            (boolean (not-empty claims)))]
+              (assoc entities entity-uuid
+                     (assoc entity :active active?))))
+          {}
+          (:entities model))
          ;; Process relations: set :active from :claimed-by, KEEP :claimed-by
          updated-relations
          (reduce-kv
-           (fn [relations relation-uuid relation]
-             (let [claims (get relation :claimed-by #{})
-                   active? (if current-version-uuid
-                             (contains? claims current-version-uuid)
-                             (boolean (not-empty claims)))]
-               (assoc relations relation-uuid
-                      (assoc relation :active active?))))
-           {}
-           (:relations model))]
+          (fn [relations relation-uuid relation]
+            (let [claims (get relation :claimed-by #{})
+                  active? (if current-version-uuid
+                            (contains? claims current-version-uuid)
+                            (boolean (not-empty claims)))]
+              (assoc relations relation-uuid
+                     (assoc relation :active active?))))
+          {}
+          (:relations model))]
      (assoc model
-       :entities updated-entities
-       :relations updated-relations))))
+            :entities updated-entities
+            :relations updated-relations))))
 
 (defn compute-active-flags
   "Sets :active flags based on intersection of :claimed-by with latest version UUIDs.
@@ -622,26 +905,26 @@
         ;; Update entity active flags
         updated-entities
         (reduce-kv
-          (fn [entities entity-uuid entity]
-            (let [claimed-by (get entity :claimed-by #{})
-                  active? (boolean (some latest-versions claimed-by))]
-              (assoc entities entity-uuid
-                     (assoc entity :active active?))))
-          {}
-          (:entities model))
+         (fn [entities entity-uuid entity]
+           (let [claimed-by (get entity :claimed-by #{})
+                 active? (boolean (some latest-versions claimed-by))]
+             (assoc entities entity-uuid
+                    (assoc entity :active active?))))
+         {}
+         (:entities model))
         ;; Update relation active flags
         updated-relations
         (reduce-kv
-          (fn [relations relation-uuid relation]
-            (let [claimed-by (get relation :claimed-by #{})
-                  active? (boolean (some latest-versions claimed-by))]
-              (assoc relations relation-uuid
-                     (assoc relation :active active?))))
-          {}
-          (:relations model))]
+         (fn [relations relation-uuid relation]
+           (let [claimed-by (get relation :claimed-by #{})
+                 active? (boolean (some latest-versions claimed-by))]
+             (assoc relations relation-uuid
+                    (assoc relation :active active?))))
+         {}
+         (:relations model))]
     (assoc model
-      :entities updated-entities
-      :relations updated-relations)))
+           :entities updated-entities
+           :relations updated-relations)))
 
 (defprotocol ERDModelProjectionProtocol
   (added? [this] "Returns true if this is added or false otherwise")
@@ -679,10 +962,10 @@
     :as entity}]
   (let [{:keys [diff added?]} (projection-data entity)]
     (and
-      (not added?)
-      (or
-        (not-empty (dissoc diff :width :height))
-        (some attribute-changed? attributes)))))
+     (not added?)
+     (or
+      (not-empty (dissoc diff :width :height))
+      (some attribute-changed? attributes)))))
 
 (defn new-entity? [e] (boolean (:added? (projection-data e))))
 (defn strong-entity? [{:keys [type]}] (= "STRONG" type))
@@ -724,10 +1007,10 @@
      {that-id :euuid
       :as that}]
     {:pre [(or
-             (nil? that)
-             (and
-               (instance? ERDEntityAttribute that)
-               (= this-id that-id)))]}
+            (nil? that)
+            (and
+             (instance? ERDEntityAttribute that)
+             (= this-id that-id)))]}
     ;; FIXME configuration should also implement this protocol or
     ;; at least some multimethod that would return configuration diff
     ;; based on attribute type
@@ -736,8 +1019,8 @@
                 (select-keys attribute [:euuid :name :type :constraint :active :configuration]))]
         (let [[{config :configuration} n _]
               (clojure.data/diff
-                (focus-attribute that)
-                (focus-attribute this))]
+               (focus-attribute that)
+               (focus-attribute this))]
           ;; 1. Check configuration has been extended and that contains more
           ;;    information than this
           ;; 2. Check if some existing attribute changes were made
@@ -751,22 +1034,22 @@
      :cljs neyho.eywa.dataset.core/ERDEntity)
   (mark-added [this]
     (vary-meta
-      (update this :attributes #(mapv mark-added %))
-      assoc-in [:dataset/projection :added?] true))
+     (update this :attributes #(mapv mark-added %))
+     assoc-in [:dataset/projection :added?] true))
   (mark-removed [this]
     (vary-meta
-      (update this :attributes #(mapv mark-removed %))
-      assoc-in [:dataset/projection :removed?] true))
+     (update this :attributes #(mapv mark-removed %))
+     assoc-in [:dataset/projection :removed?] true))
   (mark-diff [this diff] (vary-meta this assoc-in [:dataset/projection :diff] diff))
   (added? [this] (boolean (:added? (projection-data this))))
   (removed? [this] (boolean (:removed? (projection-data this))))
   (diff? [this]
     (let [{:keys [diff added?]} (projection-data this)]
       (and
-        (not added?)
-        (or
-          (not-empty (dissoc diff :width :height))
-          (some attribute-changed? (:attributes this))))))
+       (not added?)
+       (or
+        (not-empty (dissoc diff :width :height))
+        (some attribute-changed? (:attributes this))))))
   (diff [this] (:diff (projection-data this)))
   (clean-projection-meta [this] (vary-meta this dissoc :dataset/projection))
   (suppress [this]
@@ -776,16 +1059,16 @@
                  ;;
                  (diff? this)
                  (->
-                   this
-                   (merge this (dissoc (diff this) :attributes))
-                   (update :attributes
-                           (fn [as]
-                             (vec
-                               (remove nil? (map suppress as))))))
+                  this
+                  (merge this (dissoc (diff this) :attributes))
+                  (update :attributes
+                          (fn [as]
+                            (vec
+                             (remove nil? (map suppress as))))))
                  #_(let [cso (get-in (diff this) [:configuration :constraints :unique])]
                      (cond->
 
-                       (some? cso) (assoc-in [:configuration :constraints :unique] cso)))
+                      (some? cso) (assoc-in [:configuration :constraints :unique] cso)))
                  :else this)]
       (with-meta this' nil)))
   (project
@@ -794,10 +1077,10 @@
      {that-id :euuid
       :as that}]
     {:pre [(or
-             (nil? that)
-             (and
-               (instance? ERDEntity that)
-               (= this-id that-id)))]}
+            (nil? that)
+            (and
+             (instance? ERDEntity that)
+             (= this-id that-id)))]}
     ;; If that exists
     (if (some? that)
       ;; 
@@ -807,45 +1090,45 @@
             [oid nid sid] (clojure.data/diff this-ids that-ids)
             removed-attributes (when (not-empty oid)
                                  (map
-                                   mark-removed
+                                  mark-removed
                                    ;; Filter from this attributes
                                    ;; all attributes that are not in that model 
-                                   (filter
-                                     (every-pred
-                                       :active
-                                       (comp oid :euuid))
-                                     (:attributes this))))
+                                  (filter
+                                   (every-pred
+                                    :active
+                                    (comp oid :euuid))
+                                   (:attributes this))))
             attributes' (into
-                          (reduce
+                         (reduce
                             ;; Reduce attributes
-                            (fn [as {:keys [euuid]
-                                     :as attribute}]
-                              (conj
-                                as
-                                (cond-> attribute
-                                  (and
-                                    (not-empty nid)
-                                    (nid euuid))
-                                  mark-added
+                          (fn [as {:keys [euuid]
+                                   :as attribute}]
+                            (conj
+                             as
+                             (cond-> attribute
+                               (and
+                                (not-empty nid)
+                                (nid euuid))
+                               mark-added
                                   ;;
-                                  (and
-                                    (set? sid)
-                                    (sid euuid))
-                                  (as-> a
-                                        (project (get-attribute this euuid) a)))))
-                            []
-                            (:attributes that))
+                               (and
+                                (set? sid)
+                                (sid euuid))
+                               (as-> a
+                                     (project (get-attribute this euuid) a)))))
+                          []
+                          (:attributes that))
                           ;; at last conj removed attributes with marked :removed? keyword 
-                          removed-attributes)
+                         removed-attributes)
             [o _ _] (when (and this that)
                       (clojure.data/diff
-                        (select-keys this [:name :width :height])
-                        (select-keys that [:name :width :height])))
+                       (select-keys this [:name :width :height])
+                       (select-keys that [:name :width :height])))
             cso (get-in this [:configuration :constraints :unique])
             csn (get-in that [:configuration :constraints :unique])
             changed-attributes (vec (filter attribute-changed? attributes'))]
         (cond->
-          (assoc that :attributes attributes')
+         (assoc that :attributes attributes')
           ;;
           (some? o)
           (vary-meta assoc-in [:dataset/projection :diff] o)
@@ -872,20 +1155,20 @@
                (cond
                  (added? this) nil
                  (diff? this) (->
-                                this
-                                (merge (dissoc (diff this) :from :to))
-                                (update :from suppress)
-                                (update :to suppress)
-                                (with-meta nil))
+                               this
+                               (merge (dissoc (diff this) :from :to))
+                               (update :from suppress)
+                               (update :to suppress)
+                               (with-meta nil))
                  :else this)]
       (with-meta this' nil)))
   (project
     [this that]
     {:pre [(or
-             (nil? that)
-             (and
-               (instance? ERDRelation that)
-               (= (:euuid this) (:euuid that))))]}
+            (nil? that)
+            (and
+             (instance? ERDRelation that)
+             (= (:euuid this) (:euuid that))))]}
     ;; If that exists
     (if (some? that)
       ;; Check if relations are the same
@@ -894,17 +1177,17 @@
             that (normalize-relation that)
             ;; Compute difference between this and that
             [o _] (clojure.data/diff
-                    (select-keys this ks)
-                    (select-keys that ks))
+                   (select-keys this ks)
+                   (select-keys that ks))
             ;; Check only entity names since that might
             ;; affect relation
             from-projection (when (not=
-                                    (:name (:from this))
-                                    (:name (:from that)))
+                                   (:name (:from this))
+                                   (:name (:from that)))
                               {:name (:name (:from that))})
             to-projection (when (not=
-                                  (:name (:to this))
-                                  (:name (:to that)))
+                                 (:name (:to this))
+                                 (:name (:to that)))
                             {:name (:name (:to that))})
             o' (cond-> o
                  from-projection (assoc :from from-projection)
@@ -923,63 +1206,63 @@
   (suppress [this]
     (with-meta
       (reduce
-        (fn [m r]
+       (fn [m r]
+         (->
+          m
+          (set-relation (suppress r))
+          (with-meta nil)))
+       (reduce
+        (fn [m e]
           (->
-            m
-            (set-relation (suppress r))
-            (with-meta nil)))
-        (reduce
-          (fn [m e]
-            (->
-              m
-              (set-entity (suppress e))
-              (with-meta nil)))
-          this
-          (get-entities this))
-        (get-relations this))
+           m
+           (set-entity (suppress e))
+           (with-meta nil)))
+        this
+        (get-entities this))
+       (get-relations this))
       nil))
   (project
     [this that]
     (as-> that projection
       (reduce
-        (fn [m {id :euuid
-                :as e}]
-          (set-entity m (project (get-entity this id) e)))
-        projection
-        (get-entities projection))
+       (fn [m {id :euuid
+               :as e}]
+         (set-entity m (project (get-entity this id) e)))
+       projection
+       (get-entities projection))
       (reduce
-        (fn [m {id :euuid
-                :as r}]
-          (set-relation m (project (get-relation this id) r)))
-        projection
-        (get-relations projection))
+       (fn [m {id :euuid
+               :as r}]
+         (set-relation m (project (get-relation this id) r)))
+       projection
+       (get-relations projection))
       ;; Take into account relations that are missing
       ;; in that and entites have been changed in that
       (let [that-relations (get-relations projection)
             this-relations (distinct
-                             (mapcat
-                               (comp normalize-relation #(focus-entity-relations this %))
-                               (filter entity-changed? (get-entities projection))))
+                            (mapcat
+                             (comp normalize-relation #(focus-entity-relations this %))
+                             (filter entity-changed? (get-entities projection))))
             that-relation-euuids (set (map :euuid that-relations))
             target-relations (remove
-                               (comp that-relation-euuids :euuid)
-                               this-relations)]
+                              (comp that-relation-euuids :euuid)
+                              this-relations)]
         (reduce
-          (fn [m {id :euuid
-                  {from-euuid :euuid} :from
-                  {to-euuid :euuid} :to
-                  :as r}]
-            (let [from (get-entity projection from-euuid)
-                  to (get-entity projection to-euuid)]
-              (if (and from to)
-                (set-relation m
-                              (project (get-relation this id)
-                                       (-> r
-                                           (assoc :from from)
-                                           (assoc :to to))))
-                m)))
-          projection
-          target-relations))))
+         (fn [m {id :euuid
+                 {from-euuid :euuid} :from
+                 {to-euuid :euuid} :to
+                 :as r}]
+           (let [from (get-entity projection from-euuid)
+                 to (get-entity projection to-euuid)]
+             (if (and from to)
+               (set-relation m
+                             (project (get-relation this id)
+                                      (-> r
+                                          (assoc :from from)
+                                          (assoc :to to))))
+               m)))
+         projection
+         target-relations))))
   nil
   (mark-removed [_] nil)
   (mark-added [_] nil)
