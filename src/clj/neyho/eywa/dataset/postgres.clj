@@ -57,6 +57,199 @@
     (entity->table-name e)
     (throw (Exception. "Coulnd't find role entity"))))
 
+;;; Type Conversion Validation System
+
+(def type-families
+  "Groups of types that share the same underlying PostgreSQL storage type"
+  {:text #{"string" "avatar" "transit" "hashed"}
+   :json #{"json" "encrypted" "currency" "timeperiod"}
+   :numeric #{"int" "float"}
+   :reference #{"user" "group" "role"}
+   :temporal #{"timestamp"}
+   :boolean #{"boolean"}
+   :enum #{"enum"}})
+
+(defn get-type-family
+  "Returns the family keyword for a given type, or nil if not in a family"
+  [type]
+  (some (fn [[family types]]
+          (when (contains? types type)
+            family))
+        type-families))
+
+(defn same-family?
+  "Check if two types are in the same family (safe conversion)"
+  [from-type to-type]
+  (when-let [from-family (get-type-family from-type)]
+    (= from-family (get-type-family to-type))))
+
+(defn validate-type-conversion
+  "Validates a type conversion and returns:
+   - {:safe true} if conversion is always safe
+   - {:warning \"message\"} if conversion might lose data
+   - {:error \"message\" :type ::error-type :suggestion \"hint\"} if conversion is forbidden"
+  [from-type to-type]
+  (cond
+    ;; Same type - no conversion needed
+    (= from-type to-type)
+    {:safe true}
+
+    ;; SPECIFIC WARNINGS - These must come BEFORE general family checks
+
+    ;; float → int (precision loss warning)
+    (and (= from-type "float") (= to-type "int"))
+    {:warning "Converting float to int will truncate decimal values. Precision loss may occur."}
+
+    ;; Within reference family (risky - EIDs might not exist)
+    (and (contains? (:reference type-families) from-type)
+         (contains? (:reference type-families) to-type))
+    {:warning (format "Converting %s to %s assumes all entity IDs exist in the target table. Invalid references will violate foreign key constraints." from-type to-type)}
+
+    ;; timestamp → string (losing temporal semantics)
+    (and (= from-type "timestamp") (= to-type "string"))
+    {:warning "Converting timestamp to string will lose temporal semantics and indexing capabilities. Consider carefully if this is necessary."}
+
+    ;; encrypted → non-json (data is encrypted)
+    (and (= from-type "encrypted")
+         (not (contains? (:json type-families) to-type))
+         (not= to-type "string"))
+    {:error "Cannot convert encrypted data to non-JSON/string type: Data is encrypted and cannot be directly converted."
+     :type ::forbidden-conversion
+     :suggestion "Decrypt data first or keep as encrypted/json type."}
+
+    ;; GENERAL SAFE CONVERSIONS
+
+    ;; Any type can be converted to string (after specific checks above)
+    (= to-type "string")
+    {:safe true}
+
+    ;; Within same family - safe (same DB type) - after specific warnings
+    (same-family? from-type to-type)
+    {:safe true}
+
+    ;; int → float (widening)
+    (and (= from-type "int") (= to-type "float"))
+    {:safe true}
+
+    ;; enum → string (enum values are strings)
+    (and (= from-type "enum") (= to-type "string"))
+    {:safe true}
+
+    ;; RISKY CONVERSIONS (data-dependent)
+
+    ;; string → numeric (risky - depends on data)
+    (and (= from-type "string") (contains? #{"int" "float"} to-type))
+    {:warning (format "Converting string to %s requires all values to be valid numbers. Invalid values will cause the conversion to fail." to-type)}
+
+    ;; string → boolean (risky - depends on data)
+    (and (= from-type "string") (= to-type "boolean"))
+    {:warning "Converting string to boolean requires all values to be 't', 'f', 'true', 'false', 'yes', 'no', '1', '0'. Invalid values will cause the conversion to fail."}
+
+    ;; string → timestamp (risky - depends on data)
+    (and (= from-type "string") (= to-type "timestamp"))
+    {:warning "Converting string to timestamp requires all values to be valid timestamp formats. Invalid values will cause the conversion to fail."}
+
+    ;; string → json (lossy - invalid JSON becomes NULL)
+    (and (= from-type "string") (= to-type "json"))
+    {:warning "Converting string to json will set non-JSON values to NULL. This may result in data loss."}
+
+    ;; string → enum (risky - values must be in enum set)
+    (and (= from-type "string") (= to-type "enum"))
+    {:warning "Converting string to enum requires all values to be valid enum values. Invalid values will cause the conversion to fail."}
+
+    ;; FORBIDDEN: avatar → json (current implementation nulls everything)
+    (and (= from-type "avatar") (= to-type "json"))
+    {:error "Cannot convert avatar to json: Avatar URLs/data cannot be meaningfully converted to JSON."
+     :type ::forbidden-conversion
+     :suggestion "Convert to string first if you need to preserve the data, then manually transform to valid JSON if needed."}
+
+    ;; FORBIDDEN: json → numeric
+    (and (contains? (:json type-families) from-type)
+         (contains? #{"int" "float"} to-type))
+    {:error (format "Cannot convert %s to %s: No meaningful automatic conversion exists." from-type to-type)
+     :type ::forbidden-conversion
+     :suggestion "Extract numeric fields from JSON manually before converting."}
+
+    ;; FORBIDDEN: json → boolean
+    (and (contains? (:json type-families) from-type)
+         (= to-type "boolean"))
+    {:error (format "Cannot convert %s to boolean: No meaningful automatic conversion exists." from-type)
+     :type ::forbidden-conversion
+     :suggestion "Extract boolean fields from JSON manually before converting."}
+
+    ;; FORBIDDEN: timestamp → int (semantic mismatch)
+    (and (= from-type "timestamp") (= to-type "int"))
+    {:error "Cannot convert timestamp to int: Use explicit epoch conversion if needed."
+     :type ::forbidden-conversion
+     :suggestion "Create a new attribute and populate it with epoch timestamps explicitly."}
+
+    ;; FORBIDDEN: boolean → numeric
+    (and (= from-type "boolean") (contains? #{"int" "float"} to-type))
+    {:error (format "Cannot convert boolean to %s: Semantic mismatch." to-type)
+     :type ::forbidden-conversion
+     :suggestion "Convert to string first if you need '0'/'1' representation, or create explicit mapping logic."}
+
+    ;; FORBIDDEN: reference → non-reference (losing referential integrity)
+    (and (contains? (:reference type-families) from-type)
+         (not (contains? (:reference type-families) to-type))
+         (not= to-type "string"))
+    {:error (format "Cannot convert %s to %s: This would lose referential integrity." from-type to-type)
+     :type ::forbidden-conversion
+     :suggestion "Convert to string first if you need to preserve entity IDs."}
+
+    ;; Default: Unknown/unsupported conversion
+    :else
+    {:error (format "Unsupported type conversion from %s to %s." from-type to-type)
+     :type ::unsupported-conversion
+     :suggestion "This conversion path has not been validated. Please review the type compatibility matrix."}))
+
+(defn check-type-conversion!
+  "Validates type conversion and throws exception if forbidden, logs warning if risky.
+   Returns true if conversion can proceed."
+  [entity attribute old-type new-type]
+  (let [validation (validate-type-conversion old-type new-type)]
+    (cond
+      (:safe validation)
+      true
+
+      (:warning validation)
+      (do
+        (log/warnf "Type conversion warning for %s.%s (%s → %s): %s"
+                   (:name entity)
+                   (:name attribute)
+                   old-type
+                   new-type
+                   (:warning validation))
+        true)
+
+      (:error validation)
+      (throw
+        (ex-info
+          (format "Forbidden type conversion for %s.%s: %s → %s\n%s"
+                  (:name entity)
+                  (:name attribute)
+                  old-type
+                  new-type
+                  (:error validation))
+          {:type (or (:type validation) ::forbidden-conversion)
+           :entity (:name entity)
+           :attribute (:name attribute)
+           :from-type old-type
+           :to-type new-type
+           :suggestion (:suggestion validation)}))
+
+      :else
+      (throw
+        (ex-info
+          (format "Unknown validation result for %s.%s: %s → %s"
+                  (:name entity)
+                  (:name attribute)
+                  old-type
+                  new-type)
+          {:validation validation})))))
+
+;;; End Type Conversion Validation System
+
 (defn type->ddl
   "Converts type to DDL syntax"
   [t]
@@ -312,34 +505,8 @@
               column (column-name (or dn name))
               old-enum-name (normalize-name (str old-table \space (or dn name)))
               new-enum-name (normalize-name (str new-table \space name))]
+          (when dt (check-type-conversion! entity attribute dt type))
           (cond-> []
-            ;; If current constraint is mandatory or unique
-            ;; and it wasn't before, than add not null constraint
-            ;; DEPRECATED - mandatory should be enforced by application
-            ;; logic, not DB
-            ;; (and
-            ;;  (not (#{"mandatory"} dc))
-            ;;  (#{"mandatory"} constraint))
-            ;; (conj
-            ;;  (do
-            ;;    (log/debugf "Setting NOT NULL constraint in table %s column %s" old-table column)
-            ;;    (format
-            ;;     "alter table \"%s\" alter column %s set not null"
-            ;;     old-table column)))
-            ;; (and
-            ;;  (#{"mandatory"} dc)
-            ;;  (or
-            ;;   ;; If current is not mandatory or unique but it previously was,
-            ;;   ;; than remove not null constraint
-            ;;   (not (#{"mandatory"} constraint))
-            ;;     ;; Or if attribute is removed, than remove not null constraint
-            ;;   (core/removed-attribute? attribute)))
-            ;; (conj
-            ;;  (do
-            ;;    (log/debugf "[%s]Removing table %s column %s NOT NULL constraint" euuid old-table column)
-            ;;    (format
-            ;;     "alter table \"%s\" alter column %s drop not null"
-            ;;     old-table column)))
             ;; Change attribute name
             (and dn (not= (column-name dn) (column-name name)))
             (conj
@@ -354,6 +521,7 @@
             (conj (generate-enum-type-ddl new-enum-name values))
             ;; If type is one of
             ;; Set all current values to null
+            ;; NOTE: This is now caught by validation and should throw an error
             (and dt
                  (#{"avatar"} dt)
                  (#{"json"} type))
@@ -388,20 +556,20 @@
                       (case type
                         "enum" new-enum-name
                         (type->ddl type)))
-                    (= "int" type) (str " using(trim(" column ")::integer)")
-                    (= "float" type) (str " using(trim(" column ")::float)")
-                    (= "string" type) (str " using(" column "::text)")
+                      (= "int" type) (str " using(trim(" column ")::integer)")
+                      (= "float" type) (str " using(trim(" column ")::float)")
+                      (= "string" type) (str " using(" column "::text)")
                    ; (= "json" type) (str " using(" column "::jsonb)")
-                    (= "json" type) (str " using\n case when "
-                                         column " ~ '^\\s*\\{.*\\}\\s*$' OR "
-                                         column " ~ '^\\s*\\[.*\\]\\s*$'\nthen " column
-                                         "::jsonb\nelse NULL end;")
-                    (= "transit" type) (str " using(" column "::text)")
-                    (= "avatar" type) (str " using(" column "::text)")
-                    (= "encrypted" type) (str " using(" column "::text)")
-                    (= "hashed" type) (str " using(" column "::text)")
-                    (= "boolean" type) (str " using(trim(" column ")::boolean)")
-                    (= "enum" type) (str " using(" column ")::" old-enum-name)))))
+                      (= "json" type) (str " using\n case when "
+                                           column " ~ '^\\s*\\{.*\\}\\s*$' OR "
+                                           column " ~ '^\\s*\\[.*\\]\\s*$'\nthen " column
+                                           "::jsonb\nelse NULL end;")
+                      (= "transit" type) (str " using(" column "::text)")
+                      (= "avatar" type) (str " using(" column "::text)")
+                      (= "encrypted" type) (str " using(" column "::text)")
+                      (= "hashed" type) (str " using(" column "::text)")
+                      (= "boolean" type) (str " using(trim(" column ")::boolean)")
+                      (= "enum" type) (str " using(" column ")::" old-enum-name)))))
             ;; If attribute was previously enum and now it is not enum
             ;; than delete enum type
             (= dt "enum")
@@ -470,6 +638,27 @@
                               old-table column new-enum-name column new-enum-name)
                       (format "drop type %s__" new-enum-name))))))))))
 
+(defn orphaned-attribute->drop-ddl
+  "Generates DROP COLUMN DDL for an orphaned attribute.
+   An orphaned attribute exists only in a recalled/destroyed version,
+   not in any remaining deployed versions.
+
+   Returns a vector of DDL statements to execute."
+  [{:keys [entity attribute]}]
+  (let [table-name (entity->table-name entity)
+        column-name (column-name (:name attribute))
+        attr-type (:type attribute)]
+    (cond-> []
+      ;; Always drop the column
+      true
+      (conj (format "ALTER TABLE \"%s\" DROP COLUMN IF EXISTS %s"
+                    table-name column-name))
+
+      ;; If enum type, also drop the enum type definition
+      (= "enum" attr-type)
+      (conj (format "DROP TYPE IF EXISTS \"%s\" CASCADE"
+                    (normalize-name (str table-name " " (:name attribute))))))))
+
 ;; 1. Change attributes by calling attribute-delta->ddl
 ;; 2. Rename table if needed
 ;; 3. Change constraints
@@ -493,18 +682,18 @@
            (format "alter table \"%s\" rename constraint \"%s_euuid_key\" to \"%s_euuid_key\"" table old-table table)
            (format "alter sequence \"%s__eid_seq\" rename to \"%s__eid_seq\"" old-table table)
            ;; AUDIT
-           (format "alter table \"%s\" rename constraint \"%s_%s_fkey\" to \"%s_%s_fkey\"" table old-table "modified_by" table "modified_by")]
+           (format "alter table \"%s\" rename constraint \"%s_%s_fkey\" to \"%s_%s_fkey\"" table old-table "modified_by" table "modified_by")
           ;;
-          (some? old-constraints)
-          (into
-            (map-indexed
-              (fn [idx _]
-                (let [constraint (str "_eucg_" idx)]
-                  (format
-                    "alter table \"%s\" rename constraint \"%s%s\" to \"%s%s\""
-                    table old-table constraint
-                    table constraint)))
-              old-constraints))))
+           (some? old-constraints)
+           (into
+             (map-indexed
+               (fn [idx _]
+                 (let [constraint (str "_eucg_" idx)]
+                   (format
+                     "alter table \"%s\" rename constraint \"%s%s\" to \"%s%s\""
+                     table old-table constraint
+                     table constraint)))
+               old-constraints))]))
       ;; If there are some differences in constraints
       (-> diff :configuration :constraints)
       (into
@@ -861,7 +1050,6 @@
       {}
       (core/get-entities model))))
 
-
 (defn- get-dataset-versions
   "Gets all versions for a dataset by its :euuid or :name, ordered by modified_on desc"
   [{:keys [euuid name]}]
@@ -910,31 +1098,15 @@
                        (mapcat :versions datasets))
 
         ;; Build global model with ALL claims
+        ;; join-models handles active flags via "last deployment wins"
         initial-model (core/map->ERDModel {:entities {}
                                            :relations {}})
-        global-with-all-claims
+        final-model
         (reduce
           (fn [global {:keys [euuid model]}]
             (core/join-models global (core/add-claims model euuid)))
           initial-model
-          all-versions)
-
-        ;; Group versions by dataset to find latest per dataset
-        versions-by-dataset (group-by #(get-in % [:dataset :euuid]) all-versions)
-
-        ;; Get latest version per dataset
-        latest-versions (map
-                          (fn [[_ versions]]
-                            (last (sort-by :modified_on versions)))
-                          versions-by-dataset)
-
-        ;; Collect version UUIDs from latest versions
-        latest-version-uuids (set (map :euuid latest-versions))
-
-        ;; Compute active flags based on claimed-by intersection with latest versions
-        final-model (core/compute-active-flags
-                      global-with-all-claims
-                      latest-version-uuids)]
+          all-versions)]
 
     final-model))
 
@@ -1125,40 +1297,78 @@
       (log/infof "Deleting version record %s@%s" dataset-name (:name version))
       (delete-entity this du/dataset-version {:euuid euuid})
 
-      ;; 10. Handle three cases: only version, most recent, or older version
-      (cond
-        ;; Case 1: Only deployed version - delete the dataset itself
-        only-version?
-        (do
-          (log/infof "Last version deleted, removing dataset %s" dataset-name)
-          (dataset/delete-entity du/dataset {:euuid dataset-euuid})
-          ;; Rebuild model without this dataset
-          (let [updated-model (assoc (rebuild-global-model-from-versions) :version 1)]
-            (dataset/save-model updated-model)
-            (query/deploy-schema (model->schema updated-model))
-            (core/add-to-deploy-history this updated-model)
-            (try
-              (lacinia/add-shard ::datasets (fn [] (lacinia/generate-lacinia-schema this)))
-              (catch Throwable e
-                (log/error e "Couldn't add lacinia schema shard")))))
+      ;; 9.5. Drop orphaned attribute columns and rebuild model
+      ;; After deleting the version, find attributes that exist ONLY in the recalled version
+      ;; and drop their database columns
+      (let [;; Rebuild global model from remaining deployed versions
+            updated-model (rebuild-global-model-from-versions)
+            recalled-model (:model version)
 
-        ;; Case 2: Most recent version (but not only) - rollback to previous version
-        is-most-recent?
-        (let [previous-version (second all-deployed-versions)]
-          (log/infof "Recalled most recent version, rolling back to %s@%s"
-                     dataset-name (:name previous-version))
-          ;; Deploy previous version to restore its entities
-          (core/deploy! this previous-version))
+            ;; Project to find what recalled version would ADD to updated global
+            ;; Attributes marked :added? don't exist in updated-model → orphaned
+            projection (core/project updated-model recalled-model)
+
+            ;; Find all orphaned attributes
+            orphaned-attrs (for [entity (core/get-entities projection)
+                                 attr (:attributes entity)
+                                 :when (core/new-attribute? attr)]
+                             {:entity entity
+                              :attribute attr})]
+
+        ;; Drop orphaned columns from database
+        (when (not-empty orphaned-attrs)
+          (log/infof "Dropping %d orphaned attribute columns from recalled version" (count orphaned-attrs))
+          (with-open [con (jdbc/get-connection (:datasource *db*))]
+            (doseq [orphan orphaned-attrs]
+              (let [ddl-statements (orphaned-attribute->drop-ddl orphan)]
+                (doseq [sql ddl-statements]
+                  (try
+                    (execute-one! con [sql])
+                    (log/debugf "Dropped orphaned column: %s" sql)
+                    (catch Throwable e
+                      (log/errorf e "Failed to drop orphaned column: %s" sql))))))))
+
+        ;; 10. Handle three cases: only version, most recent, or older version
+        ;; All cases now just rebuild (reusing updated-model from step 9.5)
+        (cond
+          ;; Case 1: Only deployed version - delete the dataset itself
+          only-version?
+          (do
+            (log/infof "Last version deleted, removing dataset %s" dataset-name)
+            (dataset/delete-entity du/dataset {:euuid dataset-euuid})
+            ;; Rebuild model without this dataset (reuse updated-model)
+            (let [final-model (assoc updated-model :version 1)]
+              (dataset/save-model final-model)
+              (query/deploy-schema (model->schema final-model))
+              (core/add-to-deploy-history this final-model)
+              (try
+                (lacinia/add-shard ::datasets (fn [] (lacinia/generate-lacinia-schema this)))
+                (catch Throwable e
+                  (log/error e "Couldn't add lacinia schema shard")))))
+
+          ;; Case 2: Most recent version - SIMPLIFIED (no redeploy!)
+          is-most-recent?
+          (do
+            (log/infof "Recalled most recent version, rebuilding from remaining versions")
+            ;; Just rebuild from remaining versions (reuse updated-model)
+            (let [final-model (assoc updated-model :version 1)]
+              (dataset/save-model final-model)
+              (query/deploy-schema (model->schema final-model))
+              (core/add-to-deploy-history this final-model)
+              (try
+                (lacinia/add-shard ::datasets (fn [] (lacinia/generate-lacinia-schema this)))
+                (catch Throwable e
+                  (log/error e "Couldn't add lacinia schema shard"))))))
 
         ;; Case 3: Older version - just reload model without this version
         :else
         (do
           (log/infof "Recalled older version %s@%s, rebuilding model" dataset-name (:name version))
-          ;; Rebuild global model from remaining deployed versions
-          (let [updated-model (assoc (rebuild-global-model-from-versions) :version 1)]
-            (dataset/save-model updated-model)
-            (query/deploy-schema (model->schema updated-model))
-            (core/add-to-deploy-history this updated-model)
+          ;; Rebuild global model from remaining deployed versions (reuse updated-model)
+          (let [final-model (assoc updated-model :version 1)]
+            (dataset/save-model final-model)
+            (query/deploy-schema (model->schema final-model))
+            (core/add-to-deploy-history this final-model)
             (try
               (lacinia/add-shard ::datasets (fn [] (lacinia/generate-lacinia-schema this)))
               (catch Throwable e
