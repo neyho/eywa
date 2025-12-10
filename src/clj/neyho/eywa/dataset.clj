@@ -50,29 +50,38 @@
 ;; Dataset meta-model instance UUID
 (def datasets-model-uuid #uuid "4ab2fe4f-9b74-4a23-8441-60b58be08e7e")
 
-;; Declare current dataset meta-model version
-(patch/current-version ::dataset "2025.6.0")
-
 (defn current-dataset-version
   "Returns the dataset meta-model from resources"
   []
   (<-transit (slurp (io/resource "dataset/dataset.json"))))
 
-;; Migration: 1.0 → 1.1.0 (removes Dataset Entity/Relation entities)
+;; Declare current dataset meta-model version (read from file)
+(patch/current-version ::dataset (:name (current-dataset-version)))
+
+;; Migration: 1.0.0 → 1.1.0 (removes Dataset Entity/Relation entities)
 (patch/upgrade
   ::dataset "1.0.0"
-  (log/info "[Dataset] Upgrading meta-model 1.0 → 1.1.0 (removing Dataset Entity/Relation)")
+  (log/info "[Dataset] Upgrading meta-model 1.0.0 → 1.0.0 (removing Dataset Entity/Relation)")
   (dataset/deploy! *db* (current-dataset-version)))
+
+;; Migration: 1.0 → 1.0.2 (removes UI attributes, adds Active flags)
+(patch/upgrade
+  ::dataset "1.0"
+  (log/info "[Dataset] Upgrading meta-model 1.0 → 1.0.2 (removing UI layout attributes)")
+  (log/info "[Dataset] Deploying dataset v1.0.2 - Width/Height/Position/Type/Path will become inactive")
+  (dataset/deploy! *db* (current-dataset-version))
+  (log/info "[Dataset] Migration complete - UI attributes preserved as inactive columns"))
 
 (declare latest-deployed-version)
 
 (defn level-dataset!
   "Ensures dataset meta-model is at current version and tracked in __version_history"
   []
-  (when-let [{deployed-version :name} (latest-deployed-version datasets-model-uuid)]
-    (log/infof "[Dataset] Checking meta-model version: %s → 1.0.0" deployed-version)
-    (patch/apply ::dataset deployed-version "1.0.0")
-    (update/sync ::dataset "1.0.0")))
+  (let [current-version (:name (current-dataset-version))]
+    (when-let [{deployed-version :name} (latest-deployed-version datasets-model-uuid)]
+      (log/infof "[Dataset] Checking meta-model version: %s → %s" deployed-version current-version)
+      (patch/apply ::dataset deployed-version)
+      (update/sync ::dataset current-version))))
 
 ; (defn wrap-resolver-request
 ;   "Function should take handle apply "

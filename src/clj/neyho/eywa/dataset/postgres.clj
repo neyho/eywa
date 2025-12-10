@@ -530,6 +530,15 @@
         old-constraints (get-in old-entity [:configuration :constraints :unique])
         table (entity->table-name entity)
         attributes' (keep #(attribute-delta->ddl entity %) attributes)]
+    #_(do
+        (def attributes' attributes')
+        (def diff diff)
+        (def entity entity)
+        (def attributes attributes)
+        (def old-entity old-entity)
+        (def old-table old-table)
+        (def table table)
+        (def old-constraints old-constraints))
     (cond-> (reduce into [] attributes')
       ;; Renaming occured
       (:name diff)
@@ -540,18 +549,18 @@
            (format "alter table \"%s\" rename constraint \"%s_euuid_key\" to \"%s_euuid_key\"" table old-table table)
            (format "alter sequence \"%s__eid_seq\" rename to \"%s__eid_seq\"" old-table table)
            ;; AUDIT
-           (format "alter table \"%s\" rename constraint \"%s_%s_fkey\" to \"%s_%s_fkey\"" table old-table "modified_by" table "modified_by")
+           (format "alter table \"%s\" rename constraint \"%s_%s_fkey\" to \"%s_%s_fkey\"" table old-table "modified_by" table "modified_by")]
           ;;
-           (some? old-constraints)
-           (into
-             (map-indexed
-               (fn [idx _]
-                 (let [constraint (str "_eucg_" idx)]
-                   (format
-                     "alter table \"%s\" rename constraint \"%s%s\" to \"%s%s\""
-                     table old-table constraint
-                     table constraint)))
-               old-constraints))]))
+          (some? old-constraints)
+          (into
+            (map-indexed
+              (fn [idx _]
+                (let [constraint (str "_eucg_" idx)]
+                  (format
+                    "alter table \"%s\" rename constraint \"%s%s\" to \"%s%s\""
+                    table old-table constraint
+                    table constraint)))
+              old-constraints))))
       ;; If there are some differences in constraints
       (-> diff :configuration :constraints)
       (into
@@ -928,7 +937,19 @@
           :modified_on nil}
          :args {:_order_by {:modified_on :desc}}}]})))
 
-(defn rebuild-global-model-from-versions
+
+(defn deployed-versions
+  []
+  (dataset/search-entity
+    du/dataset-version
+    {:deployed {:_boolean :TRUE}
+     :_order_by {:modified_on :asc}}
+    {:euuid nil
+     :model nil
+     :modified_on nil
+     :dataset [{:selections {:euuid nil}}]}))
+
+(defn rebuild-global-model
   "Utility function to rebuild the global model from ALL deployed dataset versions.
    Use this as a backup/recovery mechanism if __deploy_history is corrupted.
 
@@ -938,35 +959,20 @@
    3. Determine which entities/relations are in LATEST version per dataset
    4. Compute :active flags based on step 3
    5. Return global model (does NOT save to __deploy_history)"
-  []
-  (let [;; Get ALL deployed versions from all datasets
-        datasets (dataset/search-entity
-                   du/dataset
-                   nil
-                   {:versions
-                    [{:selections {:euuid nil
-                                   :model nil
-                                   :modified_on nil
-                                   :dataset [{:selections {:euuid nil}}]}
-                      :args {:_where {:deployed {:_boolean :TRUE}}}}]})
+  ([] (rebuild-global-model (deployed-versions)))
+  ([all-versions]
+   (let [;; Build global model with ALL claims
+         ;; join-models handles active flags via "last deployment wins"
+         initial-model (core/map->ERDModel {:entities {}
+                                            :relations {}})
+         final-model
+         (reduce
+           (fn [global {:keys [euuid model]}]
+             (core/join-models global (core/add-claims model euuid)))
+           initial-model
+           all-versions)]
 
-        ;; Extract and sort all versions by modification time (ascending)
-        all-versions (sort-by
-                       :modified_on
-                       (mapcat :versions datasets))
-
-        ;; Build global model with ALL claims
-        ;; join-models handles active flags via "last deployment wins"
-        initial-model (core/map->ERDModel {:entities {}
-                                           :relations {}})
-        final-model
-        (reduce
-          (fn [global {:keys [euuid model]}]
-            (core/join-models global (core/add-claims model euuid)))
-          initial-model
-          all-versions)]
-
-    final-model))
+     final-model)))
 
 (defn last-deployed-model
   "Returns the global model with ALL entities from ALL deployed versions.
@@ -975,7 +981,7 @@
    This rebuilds from ALL deployed versions to ensure historical entities
    are included. Use this as the standard way to get the current global state."
   []
-  (rebuild-global-model-from-versions))
+  (rebuild-global-model))
 
 ;; Helper functions for claims-based deployment
 (defn check-entity-name-conflicts!
@@ -1048,7 +1054,7 @@
 
           ;; Rebuild global model from ALL deployed versions to compute correct :active flags
           ;; This ensures entities not in latest versions are marked as inactive
-        (let [updated-model (assoc (rebuild-global-model-from-versions) :version 1)]
+        (let [updated-model (assoc (rebuild-global-model) :version 1)]
           (dataset/save-model updated-model)
           (core/add-to-deploy-history this updated-model)
           ;; Regenerate GraphQL schema with updated active flags
@@ -1114,6 +1120,21 @@
           exclusive-entities (core/find-exclusive-entities global version-uuids)
           exclusive-relations (core/find-exclusive-relations global version-uuids)]
 
+      #_(do
+        (def global global)
+        (def exclusive-entities exclusive-entities)
+        (def exclusive-relations exclusive-relations)
+        (def dataset dataset)
+        (def all-deployed-versions all-deployed-versions)
+        (def only-version? only-version?)
+        (def version version)
+        (def euuid euuid)
+        (def most-recent-version (first all-deployed-versions))
+        (def is-most-recent? (= euuid (:euuid most-recent-version)))
+        (def updated-model (assoc (rebuild-global-model) :version 1)))
+
+      ; (throw (Exception. "WTF!"))
+
       (log/infof "Recalling version %s@%s (only=%s, most-recent=%s)"
                  dataset-name (:name version) only-version? is-most-recent?)
 
@@ -1151,15 +1172,11 @@
               (catch Throwable e
                 (log/errorf e "Couldn't remove entity table %s" (entity->table-name entity)))))))
 
-      ;; 9. Delete version record
-      (log/infof "Deleting version record %s@%s" dataset-name (:name version))
-      (delete-entity this du/dataset-version {:euuid euuid})
-
-      ;; 9.5. Drop orphaned attribute columns and rebuild model
+      ;; 9. Drop orphaned attribute columns and rebuild model
       ;; After deleting the version, find attributes that exist ONLY in the recalled version
       ;; and drop their database columns
       (let [;; Rebuild global model from remaining deployed versions
-            updated-model (rebuild-global-model-from-versions)
+            updated-model (rebuild-global-model (remove #(= (:euuid %) euuid) (deployed-versions)))
             recalled-model (:model version)
 
             ;; Project to find what recalled version would ADD to updated global
@@ -1187,50 +1204,35 @@
                       (log/errorf e "Failed to drop orphaned column: %s" sql))))))))
 
         ;; 10. Handle three cases: only version, most recent, or older version
-        ;; All cases now just rebuild (reusing updated-model from step 9.5)
-        (cond
-          ;; Case 1: Only deployed version - delete the dataset itself
-          only-version?
-          (do
-            (log/infof "Last version deleted, removing dataset %s" dataset-name)
-            (dataset/delete-entity du/dataset {:euuid dataset-euuid})
-            ;; Rebuild model without this dataset (reuse updated-model)
-            (let [final-model (assoc updated-model :version 1)]
-              (dataset/save-model final-model)
-              (query/deploy-schema (model->schema final-model))
-              (core/add-to-deploy-history this final-model)
-              (try
-                (lacinia/add-shard ::datasets (fn [] (lacinia/generate-lacinia-schema this)))
-                (catch Throwable e
-                  (log/error e "Couldn't add lacinia schema shard")))))
-
-          ;; Case 2: Most recent version - SIMPLIFIED (no redeploy!)
-          is-most-recent?
-          (do
-            (log/infof "Recalled most recent version, rebuilding from remaining versions")
-            ;; Just rebuild from remaining versions (reuse updated-model)
-            (let [final-model (assoc updated-model :version 1)]
-              (dataset/save-model final-model)
-              (query/deploy-schema (model->schema final-model))
-              (core/add-to-deploy-history this final-model)
-              (try
-                (lacinia/add-shard ::datasets (fn [] (lacinia/generate-lacinia-schema this)))
-                (catch Throwable e
-                  (log/error e "Couldn't add lacinia schema shard"))))))
-
-        ;; Case 3: Older version - just reload model without this version
-        :else
-        (do
-          (log/infof "Recalled older version %s@%s, rebuilding model" dataset-name (:name version))
-          ;; Rebuild global model from remaining deployed versions (reuse updated-model)
-          (let [final-model (assoc updated-model :version 1)]
-            (dataset/save-model final-model)
-            (query/deploy-schema (model->schema final-model))
-            (core/add-to-deploy-history this final-model)
-            (try
-              (lacinia/add-shard ::datasets (fn [] (lacinia/generate-lacinia-schema this)))
-              (catch Throwable e
-                (log/error e "Couldn't add lacinia schema shard"))))))))
+        ;; All cases rebuild from updated-model (from step 9.5)
+        (let [final-model (assoc updated-model :version 1)]
+          (cond
+            ;; Case 1: Only deployed version - delete the dataset itself
+            only-version?
+            (do
+              (log/infof "Recalled most recent version, rebuilding from remaining versions")
+              (core/mount this {:model final-model})
+              (log/infof "Deleting version record %s@%s" dataset-name (:name version))
+              (delete-entity this du/dataset-version {:euuid euuid})
+              (log/infof "Last version deleted, removing dataset %s" dataset-name)
+              (dataset/delete-entity du/dataset {:euuid dataset-euuid}))
+            ;; Case 2: Most recent version - SIMPLIFIED (no redeploy!)
+            is-most-recent?
+            (do
+              (log/infof "Recalled most recent version, rebuilding from remaining versions")
+              (core/mount this {:model final-model})
+              (log/infof "Deleting version record %s@%s" dataset-name (:name version))
+              (delete-entity this du/dataset-version {:euuid euuid}))
+            ;; Case 3: Older version - just reload model without this version
+            :else
+            (log/infof "Recalled older version %s@%s, rebuilding model" dataset-name (:name version)))
+          (dataset/save-model final-model)
+          (query/deploy-schema (model->schema final-model))
+          (core/add-to-deploy-history this final-model)
+          (try
+            (lacinia/add-shard ::datasets (fn [] (lacinia/generate-lacinia-schema this)))
+            (catch Throwable e
+              (log/error e "Couldn't add lacinia schema shard")))))))
   ;;
   (core/destroy! [this {:keys [euuid name]}]
     (assert (or name euuid) "Specify dataset name or euuid!")
@@ -1242,6 +1244,9 @@
                    (or name (str euuid)) (count all-versions))
         ;; Recall each version in reverse chronological order (most recent first)
         ;; This ensures proper cleanup and rollback behavior
+        (comment
+          (core/recall! this {:euuid (:euuid (first all-versions))})
+          (core/recall! this {:euuid (:euuid (second all-versions))}))
         (doseq [version all-versions]
           (core/recall! this {:euuid (:euuid version)})))))
   (core/get-model

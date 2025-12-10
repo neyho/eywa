@@ -19,9 +19,9 @@
 
 (defn make-entity
   "Creates an ERDEntity with sensible defaults for UI attributes.
-   Accepts a map with :euuid, :name, and optionally :width, :height, :position, :type.
+   Accepts a map with :euuid, :name, and optionally :width, :height, :position, :type, :active.
    If UI attributes are not provided, defaults will be used for v1.0.0 compatibility."
-  [{:keys [euuid name width height position type] :as entity-map}]
+  [{:keys [euuid name width height position type active] :as entity-map}]
   (core/map->ERDEntity
    (merge
     default-entity-ui
@@ -30,7 +30,8 @@
      :original nil
      :clone nil
      :configuration {:constraints {:unique []}}
-     :attributes []}
+     :attributes []
+     :active (if (nil? active) true active)}  ; Default to true for compatibility
     (when width {:width width})
     (when height {:height height})
     (when position {:position position})
@@ -38,15 +39,16 @@
 
 (defn make-relation
   "Creates an ERDRelation with sensible defaults for UI attributes.
-   Accepts a map with :euuid, :from, :to, :cardinality, and optionally :from-label, :to-label, :path.
+   Accepts a map with :euuid, :from, :to, :cardinality, and optionally :from-label, :to-label, :path, :active.
    If UI attributes are not provided, defaults will be used for v1.0.0 compatibility."
-  [{:keys [euuid from to from-label to-label cardinality path] :as relation-map}]
+  [{:keys [euuid from to from-label to-label cardinality path active] :as relation-map}]
   (core/map->ERDRelation
    (merge
     {:euuid euuid
      :from from
      :to to
-     :cardinality cardinality}
+     :cardinality cardinality
+     :active (if (nil? active) true active)}  ; Default to true for compatibility
     ;; Only add from-label/to-label if provided
     (when from-label {:from-label from-label})
     (when to-label {:to-label to-label})

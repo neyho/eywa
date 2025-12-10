@@ -1,7 +1,7 @@
 (ns neyho.eywa.dataset.sql.naming
   (:require
-    [clojure.string :as str]
-    [neyho.eywa.dataset.core :as core]))
+   [clojure.string :as str]
+   [neyho.eywa.dataset.core :as core]))
 
 (def alphabet (.toCharArray "0123456789abcdefghijklmnopqrstuvwxyz"))
 (def MASK 35)
@@ -15,11 +15,11 @@
                        (.array))
         builder (StringBuilder.)]
     (.toString
-      (reduce
-        (fn [b by]
-          (.append b (get alphabet (bit-and by MASK))))
-        builder
-        uuid-bytes))))
+     (reduce
+      (fn [b by]
+        (.append b (get alphabet (bit-and by MASK))))
+      builder
+      uuid-bytes))))
 
 (def npattern #"[\s\_\-\.\$\[\]\{\}\#]+")
 
@@ -27,22 +27,28 @@
   ^{:doc "Name normalization function"}
   normalize-name
   (memoize
-    (fn
-      [n]
-      (clojure.string/lower-case
-        (clojure.string/replace n npattern "_")))))
+   (fn
+     [n]
+     (when-not (string? n)
+       (throw (ex-info (format "normalize-name expects a string, got %s of type %s" (pr-str n) (type n))
+                       {:value n :type (type n)})))
+     (clojure.string/lower-case
+      (clojure.string/replace n npattern "_")))))
 
 (defn column-name [n]
+  (when-not (string? n)
+    (throw (ex-info (format "column-name expects a string, got %s of type %s" (pr-str n) (type n))
+                    {:value n :type (type n)})))
   (str \" (normalize-name n) \"))
 
 (def table-name
   (memoize
-    (fn [n]
-      (let [n' (str
-                 (clojure.string/lower-case
-                   (clojure.string/replace n npattern "_")))]
-        (cond-> n'
-          (> (count n') 63) (subs 0 64))))))
+   (fn [n]
+     (let [n' (str
+               (clojure.string/lower-case
+                (clojure.string/replace n npattern "_")))]
+       (cond-> n'
+         (> (count n') 63) (subs 0 64))))))
 
 (def
   ^{:doc "Returns DB table name for given entity"}
@@ -51,10 +57,10 @@
 
 (def relation-field
   (memoize
-    (fn [table-name]
-      (let [f (str table-name "_id")]
-        (cond-> f
-          (> (count f) 63) (subs 0 64))))))
+   (fn [table-name]
+     (let [f (str table-name "_id")]
+       (cond-> f
+         (> (count f) 63) (subs 0 64))))))
 
 (defn entity->relation-field
   [entity]
@@ -69,10 +75,10 @@
   relation->table-name
   (letfn [(short-table [name]
             (str/join
-              "_"
-              (map
-                (comp str/lower-case #(re-find #"\w{2,4}" %))
-                (str/split name #"[\_\-\s]"))))]
+             "_"
+             (map
+              (comp str/lower-case #(re-find #"\w{2,4}" %))
+              (str/split name #"[\_\-\s]"))))]
     (fn [relation]
       (let [{inverted? :dataset.relation/inverted?} (meta relation)
             ;;
@@ -83,11 +89,11 @@
               (core/invert-relation relation)
               relation)
             rn (str
-                 (short-table (:name f))
-                 \_
-                 (hash-uuid id)
-                 \_
-                 (short-table (:name t)))]
+                (short-table (:name f))
+                \_
+                (hash-uuid id)
+                \_
+                (short-table (:name t)))]
         (cond-> rn
           (> (count rn) 63) (subs 0 64))))))
 
