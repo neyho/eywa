@@ -1,14 +1,14 @@
 (ns dataset.test-claims
   (:require
-   [clojure.pprint :refer [pprint]]
-   [clojure.string :as str]
-   [next.jdbc :as jdbc]
-   [neyho.eywa.dataset :as dataset]
-   [neyho.eywa.dataset.core :as core]
-   [neyho.eywa.dataset.uuids :as du]
-   [neyho.eywa.db :refer [*db*]]
-   [neyho.eywa.lacinia :as lacinia]
-   [dataset.test-helpers :refer [make-entity make-relation add-test-attribute]]))
+    [clojure.pprint :refer [pprint]]
+    [clojure.string :as str]
+    [dataset.test-helpers :refer [make-entity make-relation add-test-attribute]]
+    [next.jdbc :as jdbc]
+    [neyho.eywa.dataset :as dataset]
+    [neyho.eywa.dataset.core :as core]
+    [neyho.eywa.dataset.uuids :as du]
+    [neyho.eywa.db :refer [*db*]]
+    [neyho.eywa.lacinia :as lacinia]))
 
 (println "\n====================================")
 (println "DATASET CLAIMS SYSTEM TEST")
@@ -45,14 +45,14 @@
 
         ;; Add relation
         model-with-relations (core/add-relation
-                              model-with-entities
-                              (make-relation
-                               {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
-                                :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
-                                :from-label "product"
-                                :to-label "category"
-                                :cardinality "m2o"}))]
+                               model-with-entities
+                               (make-relation
+                                 {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
+                                  :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+                                  :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
+                                  :from-label "product"
+                                  :to-label "category"
+                                  :cardinality "m2o"}))]
 
     {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000001"
      :name "Test Dataset A"
@@ -67,7 +67,7 @@
 
         ;; Create Product entity (SAME UUID as Dataset A) with attributes
         product-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                                 :name "Product"})
+                                         :name "Product"})
                            (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000001"
                                                 :name "Name"
                                                 :type "string"
@@ -81,7 +81,7 @@
 
         ;; Create Order entity with attributes
         order-entity (-> (make-entity {:euuid #uuid "bbbbbbbb-1111-0000-0000-000000000003"
-                                               :name "Order"})
+                                       :name "Order"})
                          (add-test-attribute {:euuid #uuid "bbbbbbbb-1111-1111-0000-000000000005"
                                               :name "OrderNumber"
                                               :type "string"
@@ -94,14 +94,14 @@
 
         ;; Add relation
         model-with-relations (core/add-relation
-                              model-with-entities
-                              (make-relation
-                               {:euuid #uuid "bbbbbbbb-2222-0000-0000-000000000001"
-                                :from #uuid "bbbbbbbb-1111-0000-0000-000000000003"
-                                :to #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                :from-label "order"
-                                :to-label "product"
-                                :cardinality "m2m"}))]
+                               model-with-entities
+                               (make-relation
+                                 {:euuid #uuid "bbbbbbbb-2222-0000-0000-000000000001"
+                                  :from #uuid "bbbbbbbb-1111-0000-0000-000000000003"
+                                  :to #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+                                  :from-label "order"
+                                  :to-label "product"
+                                  :cardinality "m2m"}))]
 
     {:euuid #uuid "bbbbbbbb-0000-0000-0000-000000000001"
      :name "Test Dataset B"
@@ -116,7 +116,7 @@
 
         ;; Create Product entity with DIFFERENT UUID but SAME NAME
         product-entity (-> (make-entity {:euuid #uuid "cccccccc-1111-0000-0000-000000000001"
-                                                 :name "Product"})
+                                         :name "Product"})
                            (add-test-attribute {:euuid #uuid "cccccccc-1111-1111-0000-000000000001"
                                                 :name "Code"
                                                 :type "string"}))
@@ -136,7 +136,7 @@
   (let [model (core/map->ERDModel {})
         ;; Product with SAME UUID as Dataset A & B, but different attributes
         product-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                                 :name "Product"})
+                                         :name "Product"})
                            (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000001"
                                                 :name "Name"
                                                 :type "string"
@@ -158,18 +158,18 @@
   (let [model (core/map->ERDModel {})
         ;; Share Product and Category from Dataset A
         product-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                                 :name "Product"})
+                                         :name "Product"})
                            (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000001"
                                                 :name "Name"
                                                 :type "string"}))
         category-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000002"
-                                                  :name "Category"})
+                                          :name "Category"})
                             (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000003"
                                                  :name "Name"
                                                  :type "string"}))
         ;; Add exclusive entity
         supplier-entity (-> (make-entity {:euuid #uuid "dddddddd-1111-0000-0000-000000000001"
-                                                  :name "Supplier"})
+                                          :name "Supplier"})
                             (add-test-attribute {:euuid #uuid "dddddddd-1111-1111-0000-000000000001"
                                                  :name "Name"
                                                  :type "string"}))
@@ -189,12 +189,12 @@
   (let [model (core/map->ERDModel {})
         ;; Same UUID as Product, but renamed to "Item"
         item-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                              :name "Item"})
+                                      :name "Item"})
                         (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000001"
                                              :name "Name"
                                              :type "string"}))
         category-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000002"
-                                                  :name "Category"})
+                                          :name "Category"})
                             (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000003"
                                                  :name "Name"
                                                  :type "string"}))
@@ -213,12 +213,12 @@
   (let [model (core/map->ERDModel {})
         ;; Share Product and Category
         product-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                                 :name "Product"})
+                                         :name "Product"})
                            (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000001"
                                                 :name "Name"
                                                 :type "string"}))
         category-entity (-> (make-entity {:euuid #uuid "aaaaaaaa-1111-0000-0000-000000000002"
-                                                  :name "Category"})
+                                          :name "Category"})
                             (add-test-attribute {:euuid #uuid "aaaaaaaa-1111-1111-0000-000000000003"
                                                  :name "Name"
                                                  :type "string"}))
@@ -227,14 +227,14 @@
                                 (core/add-entity category-entity))
         ;; Share the SAME relation UUID as Dataset A
         model-with-relations (core/add-relation
-                              model-with-entities
-                              (make-relation
-                               {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
-                                :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
-                                :from-label "product"
-                                :to-label "category"
-                                :cardinality "m2o"}))]
+                               model-with-entities
+                               (make-relation
+                                 {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
+                                  :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+                                  :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
+                                  :from-label "product"
+                                  :to-label "category"
+                                  :cardinality "m2o"}))]
     {:euuid #uuid "eeeeeeee-0000-0000-0000-000000000001"
      :name "Test Dataset E"
      :version "1.0.0"
@@ -266,8 +266,8 @@
   (println "\n--- PostgreSQL Tables ---")
   (with-open [con (jdbc/get-connection (:datasource neyho.eywa.db/*db*))]
     (let [tables (jdbc/execute!
-                  con
-                  ["SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename NOT LIKE '%modeling%' AND tablename NOT LIKE '%deploy%' ORDER BY tablename"])]
+                   con
+                   ["SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename NOT LIKE '%modeling%' AND tablename NOT LIKE '%deploy%' ORDER BY tablename"])]
       (doseq [table tables]
         (println (format "  - %s" (:pg_tables/tablename table)))))))
 
@@ -275,16 +275,16 @@
   "Returns set of column names for a table"
   (with-open [con (jdbc/get-connection (:datasource neyho.eywa.db/*db*))]
     (let [columns (jdbc/execute!
-                   con
-                   ["SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ?" table-name])]
+                    con
+                    ["SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ?" table-name])]
       (set (map :columns/column_name columns)))))
 
 (defn table-exists? [table-name]
   "Check if a table exists in the database"
   (with-open [con (jdbc/get-connection (:datasource neyho.eywa.db/*db*))]
     (let [result (jdbc/execute!
-                  con
-                  ["SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = ?)" table-name])]
+                   con
+                   ["SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = ?)" table-name])]
       (:exists (first result)))))
 
 (defn get-graphql-types []
@@ -294,10 +294,10 @@
       (let [type-keys (keys schema)
             ;; Filter out special GraphQL keys (:Query, :Mutation, etc) and introspection types
             entity-types (filter
-                          #(and (keyword? %)
-                                (not (#{:Query :Mutation :Subscription} %))
-                                (not (str/starts-with? (name %) "__")))
-                          type-keys)]
+                           #(and (keyword? %)
+                                 (not (#{:Query :Mutation :Subscription} %))
+                                 (not (str/starts-with? (name %) "__")))
+                           type-keys)]
         (set (map name entity-types))))
     (catch Exception e
       (println (format "Warning: Could not get GraphQL schema: %s" (.getMessage e)))
@@ -385,10 +385,10 @@
     (println "\n4. Delete Dataset A")
     (let [dataset-a-uuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"
           dataset (dataset/get-entity
-                   neyho.eywa.dataset.uuids/dataset
-                   {:euuid dataset-a-uuid}
-                   {:versions [{:selections {:euuid nil
-                                             :name nil}}]})]
+                    neyho.eywa.dataset.uuids/dataset
+                    {:euuid dataset-a-uuid}
+                    {:versions [{:selections {:euuid nil
+                                              :name nil}}]})]
       (core/destroy! *db* dataset))
 
     (println "\n5. Verify Product still exists, Category deleted")
@@ -414,10 +414,10 @@
     (println "\n4. Delete Dataset A")
     (let [dataset-a-uuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"
           dataset (dataset/get-entity
-                   neyho.eywa.dataset.uuids/dataset
-                   {:euuid dataset-a-uuid}
-                   {:versions [{:selections {:euuid nil
-                                             :name nil}}]})]
+                    neyho.eywa.dataset.uuids/dataset
+                    {:euuid dataset-a-uuid}
+                    {:versions [{:selections {:euuid nil
+                                              :name nil}}]})]
       (core/destroy! *db* dataset))
 
     (println "\n5. Verify Product still exists, Category deleted")
@@ -450,10 +450,10 @@
     (println "\n2. Delete Dataset A (exclusive entities should be dropped)")
     (let [dataset-a-uuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"
           dataset (dataset/get-entity
-                   neyho.eywa.dataset.uuids/dataset
-                   {:euuid dataset-a-uuid}
-                   {:versions [{:selections {:euuid nil
-                                             :name nil}}]})]
+                    neyho.eywa.dataset.uuids/dataset
+                    {:euuid dataset-a-uuid}
+                    {:versions [{:selections {:euuid nil
+                                              :name nil}}]})]
       (core/destroy! *db* dataset))
 
     (let [model-after-delete (dataset/deployed-model)
@@ -483,11 +483,17 @@
     (let [model (dataset/deployed-model)
           product (get-in model [:entities #uuid "aaaaaaaa-1111-0000-0000-000000000001"])
           attributes (:attributes product)
-          attr-names (set (map :name attributes))]
+          price-attr (first (filter #(= "Price" (:name %)) attributes))
+          sku-attr (first (filter #(= "SKU" (:name %)) attributes))
+          name-attr (first (filter #(= "Name" (:name %)) attributes))]
       (assert-equals test-name 2 (count (:claimed-by product)) "Product should have 2 claims")
       (assert-true test-name (:active product) "Product should be active")
-      (assert-true test-name (contains? attr-names "SKU") "Product should have SKU attribute (from Dataset C)")
-      (assert-true test-name (not (contains? attr-names "Price")) "Product should not have Price attribute (A's definition replaced)"))))
+      (assert-true test-name (some? sku-attr) "Product should have SKU attribute (from Dataset C)")
+      (assert-true test-name (:active sku-attr) "SKU should be active (in last deployed)")
+      (assert-true test-name (some? name-attr) "Product should have Name attribute")
+      (assert-true test-name (:active name-attr) "Name should be active (in last deployed)")
+      (assert-true test-name (some? price-attr) "Product should have Price attribute (persisted)")
+      (assert-true test-name (not (:active price-attr)) "Price should be inactive (not in last deployed)"))))
 
 (defn scenario-5-multiple-shared-entities []
   (let [test-name "Scenario 5"]
@@ -509,10 +515,10 @@
     (println "\n4. Delete Dataset A")
     (let [dataset-a-uuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"
           dataset (dataset/get-entity
-                   neyho.eywa.dataset.uuids/dataset
-                   {:euuid dataset-a-uuid}
-                   {:versions [{:selections {:euuid nil
-                                             :name nil}}]})]
+                    neyho.eywa.dataset.uuids/dataset
+                    {:euuid dataset-a-uuid}
+                    {:versions [{:selections {:euuid nil
+                                              :name nil}}]})]
       (core/destroy! *db* dataset))
 
     (println "\n5. Verify Product and Category survive, exclusive relation deleted")
@@ -550,12 +556,12 @@
       (assert-true test-name (contains? (:claimed-by item) dataset-a-v2-uuid) "Should have v2 claim")
       (assert-true test-name (contains? (:claimed-by item) dataset-a-v1-uuid) "Should have v1 claim (preserved for rollback)"))
     (core/destroy! *db* (dataset/get-entity
-                         neyho.eywa.dataset.uuids/dataset
-                         {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
-                         {:euuid nil
-                          :name nil
-                          :versions [{:selections
-                                      {:euuid nil}}]}))
+                          neyho.eywa.dataset.uuids/dataset
+                          {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
+                          {:euuid nil
+                           :name nil
+                           :versions [{:selections
+                                       {:euuid nil}}]}))
     nil))
 
 ;; Helper datasets for recall testing
@@ -563,7 +569,7 @@
   "Create Order dataset v1 with just Order entity"
   (let [model (core/map->ERDModel {})
         order-entity (-> (make-entity {:euuid #uuid "eeeeeeee-1111-0000-0000-000000000001"
-                                               :name "Order"})
+                                       :name "Order"})
                          (add-test-attribute {:euuid #uuid "eeeeeeee-1111-1111-0000-000000000001"
                                               :name "OrderNumber"
                                               :type "string"
@@ -580,14 +586,14 @@
   (let [model (core/map->ERDModel {})
         ;; Re-include Order entity from v1
         order-entity (-> (make-entity {:euuid #uuid "eeeeeeee-1111-0000-0000-000000000001"
-                                               :name "Order"})
+                                       :name "Order"})
                          (add-test-attribute {:euuid #uuid "eeeeeeee-1111-1111-0000-000000000001"
                                               :name "OrderNumber"
                                               :type "string"
                                               :constraint "mandatory"}))
         ;; Add new Shipment entity
         shipment-entity (-> (make-entity {:euuid #uuid "eeeeeeee-1111-0000-0000-000000000002"
-                                                  :name "Shipment"})
+                                          :name "Shipment"})
                             (add-test-attribute {:euuid #uuid "eeeeeeee-1111-1111-0000-000000000003"
                                                  :name "TrackingCode"
                                                  :type "string"}))
@@ -623,9 +629,9 @@
             category (core/get-entity model #uuid "aaaaaaaa-1111-0000-0000-000000000002")
             dataset (try
                       (dataset/get-entity
-                       neyho.eywa.dataset.uuids/dataset
-                       {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
-                       {:euuid nil})
+                        neyho.eywa.dataset.uuids/dataset
+                        {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
+                        {:euuid nil})
                       (catch Throwable _ nil))]
         (assert-true test-name (nil? product) "Product should not exist in model after recall")
         (assert-true test-name (nil? category) "Category should not exist in model after recall")
@@ -709,13 +715,13 @@
   "Initial version with TestUser and TestRole entities"
   (let [model (core/map->ERDModel {})
         user-entity (-> (make-entity {:euuid #uuid "ffffffff-1111-0000-0000-000000000001"
-                                              :name "TestUser"})
+                                      :name "TestUser"})
                         (add-test-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000001"
                                              :name "Email"
                                              :type "string"
                                              :constraint "mandatory"}))
         role-entity (-> (make-entity {:euuid #uuid "ffffffff-1111-0000-0000-000000000002"
-                                              :name "TestRole"})
+                                      :name "TestRole"})
                         (add-test-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000002"
                                              :name "Name"
                                              :type "string"}))
@@ -733,17 +739,17 @@
   "Add TestPermission entity and relation"
   (let [model (core/map->ERDModel {})
         user-entity (-> (make-entity {:euuid #uuid "ffffffff-1111-0000-0000-000000000001"
-                                              :name "TestUser"})
+                                      :name "TestUser"})
                         (add-test-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000001"
                                              :name "Email"
                                              :type "string"}))
         role-entity (-> (make-entity {:euuid #uuid "ffffffff-1111-0000-0000-000000000002"
-                                              :name "TestRole"})
+                                      :name "TestRole"})
                         (add-test-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000002"
                                              :name "Name"
                                              :type "string"}))
         permission-entity (-> (make-entity {:euuid #uuid "ffffffff-1111-0000-0000-000000000003"
-                                                    :name "TestPermission"})
+                                            :name "TestPermission"})
                               (add-test-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000003"
                                                    :name "Code"
                                                    :type "string"}))
@@ -752,14 +758,14 @@
                                 (core/add-entity role-entity)
                                 (core/add-entity permission-entity))
         model-with-relations (core/add-relation
-                              model-with-entities
-                              (make-relation
-                               {:euuid #uuid "ffffffff-2222-0000-0000-000000000001"
-                                :from #uuid "ffffffff-1111-0000-0000-000000000002"
-                                :to #uuid "ffffffff-1111-0000-0000-000000000003"
-                                :from-label "test_role"
-                                :to-label "test_permission"
-                                :cardinality "m2m"}))]
+                               model-with-entities
+                               (make-relation
+                                 {:euuid #uuid "ffffffff-2222-0000-0000-000000000001"
+                                  :from #uuid "ffffffff-1111-0000-0000-000000000002"
+                                  :to #uuid "ffffffff-1111-0000-0000-000000000003"
+                                  :from-label "test_role"
+                                  :to-label "test_permission"
+                                  :cardinality "m2m"}))]
     {:euuid #uuid "ffffffff-0000-0000-0000-000000000002"
      :name "Lifecycle Test v2"
      :version "2.0.0"
@@ -771,12 +777,12 @@
   "Remove TestRole, keep TestUser and TestPermission"
   (let [model (core/map->ERDModel {})
         user-entity (-> (make-entity {:euuid #uuid "ffffffff-1111-0000-0000-000000000001"
-                                              :name "TestUser"})
+                                      :name "TestUser"})
                         (add-test-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000001"
                                              :name "Email"
                                              :type "string"}))
         permission-entity (-> (make-entity {:euuid #uuid "ffffffff-1111-0000-0000-000000000003"
-                                                    :name "TestPermission"})
+                                            :name "TestPermission"})
                               (add-test-attribute {:euuid #uuid "ffffffff-1111-1111-0000-000000000003"
                                                    :name "Code"
                                                    :type "string"}))
@@ -848,7 +854,7 @@
   "Create User Service v1 with attributes: Email, Phone, FirstName"
   (let [model (core/map->ERDModel {})
         user-entity (-> (make-entity {:euuid #uuid "99999999-1111-0000-0000-000000000001"
-                                              :name "Test9User"})
+                                      :name "Test9User"})
                         (add-test-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000001"
                                              :name "Email"
                                              :type "string"
@@ -874,7 +880,7 @@
   "Create User Service v2 - removes Phone, adds Address. Attrs: Email, FirstName, Address"
   (let [model (core/map->ERDModel {})
         user-entity (-> (make-entity {:euuid #uuid "99999999-1111-0000-0000-000000000001"
-                                              :name "Test9User"})
+                                      :name "Test9User"})
                         (add-test-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000001"
                                              :name "Email"
                                              :type "string"
@@ -902,7 +908,7 @@
   "Create User Service v3 - re-adds Phone, removes FirstName, adds LastName. Attrs: Email, Phone, Address, LastName"
   (let [model (core/map->ERDModel {})
         user-entity (-> (make-entity {:euuid #uuid "99999999-1111-0000-0000-000000000001"
-                                              :name "Test9User"})
+                                      :name "Test9User"})
                         (add-test-attribute {:euuid #uuid "99999999-1111-1111-0000-000000000001"
                                              :name "Email"
                                              :type "string"
@@ -1114,10 +1120,10 @@
     ;; Delete Dataset A
     (try
       (let [dataset (dataset/get-entity
-                     neyho.eywa.dataset.uuids/dataset
-                     {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
-                     {:versions [{:selections {:euuid nil
-                                               :name nil}}]})]
+                      neyho.eywa.dataset.uuids/dataset
+                      {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
+                      {:versions [{:selections {:euuid nil
+                                                :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset A")))
@@ -1127,10 +1133,10 @@
     ;; Delete Dataset B
     (try
       (let [dataset (dataset/get-entity
-                     neyho.eywa.dataset.uuids/dataset
-                     {:euuid #uuid "bbbbbbbb-0000-0000-0000-000000000000"}
-                     {:versions [{:selections {:euuid nil
-                                               :name nil}}]})]
+                      neyho.eywa.dataset.uuids/dataset
+                      {:euuid #uuid "bbbbbbbb-0000-0000-0000-000000000000"}
+                      {:versions [{:selections {:euuid nil
+                                                :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset B")))
@@ -1140,10 +1146,10 @@
     ;; Delete Dataset C
     (try
       (let [dataset (dataset/get-entity
-                     neyho.eywa.dataset.uuids/dataset
-                     {:euuid #uuid "cccccccc-0000-0000-0000-000000000000"}
-                     {:versions [{:selections {:euuid nil
-                                               :name nil}}]})]
+                      neyho.eywa.dataset.uuids/dataset
+                      {:euuid #uuid "cccccccc-0000-0000-0000-000000000000"}
+                      {:versions [{:selections {:euuid nil
+                                                :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset C")))
@@ -1153,10 +1159,10 @@
     ;; Delete Dataset D
     (try
       (let [dataset (dataset/get-entity
-                     neyho.eywa.dataset.uuids/dataset
-                     {:euuid #uuid "dddddddd-0000-0000-0000-000000000000"}
-                     {:versions [{:selections {:euuid nil
-                                               :name nil}}]})]
+                      neyho.eywa.dataset.uuids/dataset
+                      {:euuid #uuid "dddddddd-0000-0000-0000-000000000000"}
+                      {:versions [{:selections {:euuid nil
+                                                :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset D")))
@@ -1166,10 +1172,10 @@
     ;; Delete Dataset E
     (try
       (let [dataset (dataset/get-entity
-                     neyho.eywa.dataset.uuids/dataset
-                     {:euuid #uuid "eeeeeeee-0000-0000-0000-000000000000"}
-                     {:versions [{:selections {:euuid nil
-                                               :name nil}}]})]
+                      neyho.eywa.dataset.uuids/dataset
+                      {:euuid #uuid "eeeeeeee-0000-0000-0000-000000000000"}
+                      {:versions [{:selections {:euuid nil
+                                                :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset E")))
@@ -1179,10 +1185,10 @@
     ;; Delete Lifecycle Dataset
     (try
       (let [dataset (dataset/get-entity
-                     neyho.eywa.dataset.uuids/dataset
-                     {:euuid #uuid "ffffffff-0000-0000-0000-000000000000"}
-                     {:versions [{:selections {:euuid nil
-                                               :name nil}}]})]
+                      neyho.eywa.dataset.uuids/dataset
+                      {:euuid #uuid "ffffffff-0000-0000-0000-000000000000"}
+                      {:versions [{:selections {:euuid nil
+                                                :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Lifecycle Dataset")))
@@ -1192,10 +1198,10 @@
     ;; Delete UserService Dataset
     (try
       (let [dataset (dataset/get-entity
-                     neyho.eywa.dataset.uuids/dataset
-                     {:euuid #uuid "99999999-0000-0000-0000-000000000000"}
-                     {:versions [{:selections {:euuid nil
-                                               :name nil}}]})]
+                      neyho.eywa.dataset.uuids/dataset
+                      {:euuid #uuid "99999999-0000-0000-0000-000000000000"}
+                      {:versions [{:selections {:euuid nil
+                                                :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted UserService Dataset")))

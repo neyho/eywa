@@ -266,20 +266,6 @@
     [(format "create index %s_fidx on \"%s\" (%s);" table table from-field)
      (format "create index %s_tidx on \"%s\" (%s);" table table to-field)]))
 
-;; Deployment syncronization
-(defn stale-attribute? [attribute]
-  (let [{:keys [diff removed?]} (core/projection-data attribute)]
-    (or (:active diff) removed?)))
-
-(defn deactivate-stale-attributes!
-  [con {:keys [id attributes]
-        :as entity}]
-  (let [as (mapv :id (filter stale-attribute? attributes))]
-    (jdbc/execute-one!
-      con
-      ["update modeling_eywa_datasets_entities_attributes set active = false where entity=? and id=ANY(?)" id (long-array as)])
-    entity))
-
 (defn analyze-projection
   [projection]
   (let [new-entities
@@ -949,6 +935,29 @@
      :modified_on nil
      :dataset [{:selections {:euuid nil}}]}))
 
+(defn last-deployed-version-per-dataset
+  []
+  (let [datasets (dataset/search-entity
+                   du/dataset
+                   nil
+                   {:euuid nil
+                    :versions [{:selections
+                                {:euuid nil
+                                 :model nil
+                                 :modified_on nil
+                                 :dataset [{:selections {:euuid nil}}]}
+                                :args {:deployed {:_boolean :TRUE}
+                                       :_order_by {:modified_on :desc}
+                                       :_limit 1}}]})]
+    (mapcat :versions datasets)))
+
+
+(defn deployed-version-per-dataset-euuids
+  []
+  (try
+    (set (map :euuid (last-deployed-version-per-dataset)))
+    (catch Throwable ex #{})))
+
 (defn rebuild-global-model
   "Utility function to rebuild the global model from ALL deployed dataset versions.
    Use this as a backup/recovery mechanism if __deploy_history is corrupted.
@@ -971,8 +980,7 @@
              (core/join-models global (core/add-claims model euuid)))
            initial-model
            all-versions)]
-
-     final-model)))
+     (core/activate-model final-model (deployed-version-per-dataset-euuids)))))
 
 (defn last-deployed-model
   "Returns the global model with ALL entities from ALL deployed versions.
@@ -1021,13 +1029,13 @@
                        (core/map->ERDModel {:entities {}
                                             :relations {}}))
 
-              ;; 1. Check for entity name conflicts (throws on conflict)
+            ;; 1. Check for entity name conflicts (throws on conflict)
             _ (check-entity-name-conflicts! global model)
 
-              ;; 3. Call mount to transform database with updated global model
+            ;; 3. Call mount to transform database with updated global model
             dataset' (core/mount this (assoc version :model model))
 
-              ;; 4. Prepare version metadata for saving (with original model v1, not global)
+            ;; 4. Prepare version metadata for saving (with original model v1, not global)
             version'' (assoc
                         version
                         :model (assoc model :version 1)
@@ -1039,21 +1047,14 @@
                         ;              (core/get-relations model))
                         :deployed true)]
 
-          ;; Reload current projection so that you can sync data for new model
-        (core/reload this dataset')
 
-        ; (def version'' version'')
-        (comment
-          (spit "type_error.json" (->transit version''))
-          (def this *db*)
-          (sync-entity this du/dataset-version version'')
-          (:relations version'')
-          (def version'' (<-transit (slurp "type_error.json"))))
         ;; Mark version as deployed in database
         (sync-entity this du/dataset-version version'')
+        ;; Reload current projection so that you can sync data for new model
+        (core/reload this dataset')
 
-          ;; Rebuild global model from ALL deployed versions to compute correct :active flags
-          ;; This ensures entities not in latest versions are marked as inactive
+        ;; Rebuild global model from ALL deployed versions to compute correct :active flags
+        ;; This ensures entities not in latest versions are marked as inactive
         (let [updated-model (assoc (rebuild-global-model) :version 1)]
           (dataset/save-model updated-model)
           (core/add-to-deploy-history this updated-model)
@@ -1131,7 +1132,7 @@
         (def euuid euuid)
         (def most-recent-version (first all-deployed-versions))
         (def is-most-recent? (= euuid (:euuid most-recent-version)))
-        (def updated-model (assoc (rebuild-global-model) :version 1)))
+        (def updated-model (rebuild-global-model (remove #(= (:euuid %) euuid) (deployed-versions)))))
 
       ; (throw (Exception. "WTF!"))
 
@@ -1205,34 +1206,34 @@
 
         ;; 10. Handle three cases: only version, most recent, or older version
         ;; All cases rebuild from updated-model (from step 9.5)
-        (let [final-model (assoc updated-model :version 1)]
-          (cond
+        (cond
             ;; Case 1: Only deployed version - delete the dataset itself
-            only-version?
-            (do
-              (log/infof "Recalled most recent version, rebuilding from remaining versions")
-              (core/mount this {:model final-model})
-              (log/infof "Deleting version record %s@%s" dataset-name (:name version))
-              (delete-entity this du/dataset-version {:euuid euuid})
-              (log/infof "Last version deleted, removing dataset %s" dataset-name)
-              (dataset/delete-entity du/dataset {:euuid dataset-euuid}))
+          only-version?
+          (do
+            (log/infof "Recalled most recent version, rebuilding from remaining versions")
+            (core/mount this {:model updated-model})
+            (log/infof "Deleting version record %s@%s" dataset-name (:name version))
+            (delete-entity this du/dataset-version {:euuid euuid})
+            (log/infof "Last version deleted, removing dataset %s" dataset-name)
+            (dataset/delete-entity du/dataset {:euuid dataset-euuid}))
             ;; Case 2: Most recent version - SIMPLIFIED (no redeploy!)
-            is-most-recent?
-            (do
-              (log/infof "Recalled most recent version, rebuilding from remaining versions")
-              (core/mount this {:model final-model})
-              (log/infof "Deleting version record %s@%s" dataset-name (:name version))
-              (delete-entity this du/dataset-version {:euuid euuid}))
+          is-most-recent?
+          (do
+            (log/infof "Recalled most recent version, rebuilding from remaining versions")
+            (core/mount this {:model updated-model})
+            (log/infof "Deleting version record %s@%s" dataset-name (:name version))
+            (delete-entity this du/dataset-version {:euuid euuid}))
             ;; Case 3: Older version - just reload model without this version
-            :else
-            (log/infof "Recalled older version %s@%s, rebuilding model" dataset-name (:name version)))
+          :else
+          (log/infof "Recalled older version %s@%s, rebuilding model" dataset-name (:name version)))
+        (let [final-model (rebuild-global-model)]
           (dataset/save-model final-model)
           (query/deploy-schema (model->schema final-model))
-          (core/add-to-deploy-history this final-model)
-          (try
-            (lacinia/add-shard ::datasets (fn [] (lacinia/generate-lacinia-schema this)))
-            (catch Throwable e
-              (log/error e "Couldn't add lacinia schema shard")))))))
+          (core/add-to-deploy-history this final-model))
+        (try
+          (lacinia/add-shard ::datasets (fn [] (lacinia/generate-lacinia-schema this)))
+          (catch Throwable e
+            (log/error e "Couldn't add lacinia schema shard"))))))
   ;;
   (core/destroy! [this {:keys [euuid name]}]
     (assert (or name euuid) "Specify dataset name or euuid!")
@@ -1254,41 +1255,41 @@
     (dataset/deployed-model))
   (core/reload
     ([this]
-     (comment
-       (def this *db*)
-       (dataset/deployed-model))
      (let [;; Get model with claims from last-deployed-model
-           model-with-claims (core/get-last-deployed this)
+           model (core/get-last-deployed this)
+           ; model (rebuild-global-model)
            ;; Convert claims to :active flags
-           model' (-> model-with-claims
-                      core/ensure-active-flags
+           model' (-> model
                       (assoc :version 1))
            schema (model->schema model')]
-       (dataset/save-model model-with-claims)
+       (dataset/save-model model')
        (query/deploy-schema schema)
        (try
          (lacinia/add-shard ::datasets (fn [] (lacinia/generate-lacinia-schema this)))
          (catch Throwable e
            (log/error e "Couldn't add lacinia schema shard")))
-       model-with-claims))
+       model'))
     ([this {:keys [model euuid]}]
      (let [global (or
                     (core/get-model this)
                     (core/map->ERDModel nil))
            model' (core/join-models global (core/add-claims model euuid))
-           schema (model->schema model')]
+           model'' (core/activate-model model' (deployed-version-per-dataset-euuids))
+           schema (model->schema model'')]
        (query/deploy-schema schema)
-       (dataset/save-model model')
+       (dataset/save-model model'')
        (try
          (lacinia/add-shard ::datasets (fn [] (lacinia/generate-lacinia-schema this)))
          (catch Throwable e
            (log/error e "Couldn't add lacinia schema shard")))
-       model')))
+       model'')))
   (core/mount
     [this {model :model
            :as version}]
     (log/debugf "Mounting dataset version %s@%s" (:name version) (get-in version [:dataset :name]))
     (with-open [con (jdbc/get-connection (:datasource *db*))]
+      (comment
+        (def global (core/map->ERDModel nil)))
       (let [global (or
                      (core/get-model this)
                      (core/map->ERDModel nil))

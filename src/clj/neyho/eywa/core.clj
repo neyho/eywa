@@ -312,6 +312,7 @@
    (start db default-options))
   ([db options]
    (comment
+     (def options default-options)
      (def db (neyho.eywa.db.postgres/from-env)))
    (stop)
    (neyho.eywa.transit/init)
