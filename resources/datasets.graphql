@@ -47,9 +47,13 @@ type Mutation {
 
 
   deleteDataset:Boolean
-  @hook(fn: "neyho.eywa.dataset/prepare-deletion-context" metric: -1)
-  @hook(fn: "neyho.eywa.dataset/destroy-linked-versions")
+  @hook(fn: "neyho.eywa.dataset/destroy-dataset" metric: -1)
   @protect(scopes: ["dataset:delete"])
+
+  deleteDatasetVersion:Boolean
+  @hook(fn: "neyho.eywa.dataset/recall-version" metric: -1)
+  @protect(scopes: ["dataset:delete"])
+
 
   """Calling this mutation, encryption will be initialized! You can
   call this mutation only once, keep response in some safe location."""

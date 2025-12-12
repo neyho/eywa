@@ -30,7 +30,7 @@
     [patcho.patch :as patch])
   (:gen-class :main true))
 
-(patch/current-version :eywa/core "2025.6.0")
+(patch/current-version :eywa/core "2025.13")
 
 (defn setup
   ([] (setup (neyho.eywa.db.postgres/from-env)))

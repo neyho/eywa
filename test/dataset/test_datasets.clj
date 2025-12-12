@@ -1,17 +1,17 @@
-(ns dataset.test-claims
+(ns dataset.test-datasets
   (:require
-    [clojure.pprint :refer [pprint]]
-    [clojure.string :as str]
-    [dataset.test-helpers :refer [make-entity make-relation add-test-attribute]]
-    [next.jdbc :as jdbc]
-    [neyho.eywa.dataset :as dataset]
-    [neyho.eywa.dataset.core :as core]
-    [neyho.eywa.dataset.uuids :as du]
-    [neyho.eywa.db :refer [*db*]]
-    [neyho.eywa.lacinia :as lacinia]))
+   [clojure.pprint :refer [pprint]]
+   [clojure.string :as str]
+   [dataset.test-helpers :refer [make-entity make-relation add-test-attribute]]
+   [next.jdbc :as jdbc]
+   [neyho.eywa.dataset :as dataset]
+   [neyho.eywa.dataset.core :as core]
+   [neyho.eywa.dataset.uuids :as du]
+   [neyho.eywa.db :refer [*db*]]
+   [neyho.eywa.lacinia :as lacinia]))
 
 (println "\n====================================")
-(println "DATASET CLAIMS SYSTEM TEST")
+(println "DATASET SYSTEM TEST")
 (println "====================================\n")
 
 ;; Helper functions to create test models using protocol methods
@@ -45,14 +45,14 @@
 
         ;; Add relation
         model-with-relations (core/add-relation
-                               model-with-entities
-                               (make-relation
-                                 {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
-                                  :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                  :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
-                                  :from-label "product"
-                                  :to-label "category"
-                                  :cardinality "m2o"}))]
+                              model-with-entities
+                              (make-relation
+                               {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
+                                :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+                                :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
+                                :from-label "product"
+                                :to-label "category"
+                                :cardinality "m2o"}))]
 
     {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000001"
      :name "Test Dataset A"
@@ -94,14 +94,14 @@
 
         ;; Add relation
         model-with-relations (core/add-relation
-                               model-with-entities
-                               (make-relation
-                                 {:euuid #uuid "bbbbbbbb-2222-0000-0000-000000000001"
-                                  :from #uuid "bbbbbbbb-1111-0000-0000-000000000003"
-                                  :to #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                  :from-label "order"
-                                  :to-label "product"
-                                  :cardinality "m2m"}))]
+                              model-with-entities
+                              (make-relation
+                               {:euuid #uuid "bbbbbbbb-2222-0000-0000-000000000001"
+                                :from #uuid "bbbbbbbb-1111-0000-0000-000000000003"
+                                :to #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+                                :from-label "order"
+                                :to-label "product"
+                                :cardinality "m2m"}))]
 
     {:euuid #uuid "bbbbbbbb-0000-0000-0000-000000000001"
      :name "Test Dataset B"
@@ -227,14 +227,14 @@
                                 (core/add-entity category-entity))
         ;; Share the SAME relation UUID as Dataset A
         model-with-relations (core/add-relation
-                               model-with-entities
-                               (make-relation
-                                 {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
-                                  :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
-                                  :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
-                                  :from-label "product"
-                                  :to-label "category"
-                                  :cardinality "m2o"}))]
+                              model-with-entities
+                              (make-relation
+                               {:euuid #uuid "aaaaaaaa-2222-0000-0000-000000000001"
+                                :from #uuid "aaaaaaaa-1111-0000-0000-000000000001"
+                                :to #uuid "aaaaaaaa-1111-0000-0000-000000000002"
+                                :from-label "product"
+                                :to-label "category"
+                                :cardinality "m2o"}))]
     {:euuid #uuid "eeeeeeee-0000-0000-0000-000000000001"
      :name "Test Dataset E"
      :version "1.0.0"
@@ -266,8 +266,8 @@
   (println "\n--- PostgreSQL Tables ---")
   (with-open [con (jdbc/get-connection (:datasource neyho.eywa.db/*db*))]
     (let [tables (jdbc/execute!
-                   con
-                   ["SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename NOT LIKE '%modeling%' AND tablename NOT LIKE '%deploy%' ORDER BY tablename"])]
+                  con
+                  ["SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename NOT LIKE '%modeling%' AND tablename NOT LIKE '%deploy%' ORDER BY tablename"])]
       (doseq [table tables]
         (println (format "  - %s" (:pg_tables/tablename table)))))))
 
@@ -275,16 +275,16 @@
   "Returns set of column names for a table"
   (with-open [con (jdbc/get-connection (:datasource neyho.eywa.db/*db*))]
     (let [columns (jdbc/execute!
-                    con
-                    ["SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ?" table-name])]
+                   con
+                   ["SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ?" table-name])]
       (set (map :columns/column_name columns)))))
 
 (defn table-exists? [table-name]
   "Check if a table exists in the database"
   (with-open [con (jdbc/get-connection (:datasource neyho.eywa.db/*db*))]
     (let [result (jdbc/execute!
-                   con
-                   ["SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = ?)" table-name])]
+                  con
+                  ["SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = ?)" table-name])]
       (:exists (first result)))))
 
 (defn get-graphql-types []
@@ -294,10 +294,10 @@
       (let [type-keys (keys schema)
             ;; Filter out special GraphQL keys (:Query, :Mutation, etc) and introspection types
             entity-types (filter
-                           #(and (keyword? %)
-                                 (not (#{:Query :Mutation :Subscription} %))
-                                 (not (str/starts-with? (name %) "__")))
-                           type-keys)]
+                          #(and (keyword? %)
+                                (not (#{:Query :Mutation :Subscription} %))
+                                (not (str/starts-with? (name %) "__")))
+                          type-keys)]
         (set (map name entity-types))))
     (catch Exception e
       (println (format "Warning: Could not get GraphQL schema: %s" (.getMessage e)))
@@ -378,17 +378,19 @@
     (core/deploy! *db* (create-test-dataset-b))
 
     (println "\n3. Verify Product claimed by BOTH datasets")
-    (let [product-entity (get-in (dataset/deployed-model) [:entities #uuid "aaaaaaaa-1111-0000-0000-000000000001"])
+    (let [product-entity (get-in
+                          (dataset/deployed-model)
+                          [:entities #uuid "aaaaaaaa-1111-0000-0000-000000000001"])
           claims (:claimed-by product-entity)]
       (assert-equals test-name 2 (count claims) "Product should be claimed by 2 datasets"))
 
     (println "\n4. Delete Dataset A")
     (let [dataset-a-uuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"
           dataset (dataset/get-entity
-                    neyho.eywa.dataset.uuids/dataset
-                    {:euuid dataset-a-uuid}
-                    {:versions [{:selections {:euuid nil
-                                              :name nil}}]})]
+                   neyho.eywa.dataset.uuids/dataset
+                   {:euuid dataset-a-uuid}
+                   {:versions [{:selections {:euuid nil
+                                             :name nil}}]})]
       (core/destroy! *db* dataset))
 
     (println "\n5. Verify Product still exists, Category deleted")
@@ -414,10 +416,10 @@
     (println "\n4. Delete Dataset A")
     (let [dataset-a-uuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"
           dataset (dataset/get-entity
-                    neyho.eywa.dataset.uuids/dataset
-                    {:euuid dataset-a-uuid}
-                    {:versions [{:selections {:euuid nil
-                                              :name nil}}]})]
+                   neyho.eywa.dataset.uuids/dataset
+                   {:euuid dataset-a-uuid}
+                   {:versions [{:selections {:euuid nil
+                                             :name nil}}]})]
       (core/destroy! *db* dataset))
 
     (println "\n5. Verify Product still exists, Category deleted")
@@ -450,10 +452,10 @@
     (println "\n2. Delete Dataset A (exclusive entities should be dropped)")
     (let [dataset-a-uuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"
           dataset (dataset/get-entity
-                    neyho.eywa.dataset.uuids/dataset
-                    {:euuid dataset-a-uuid}
-                    {:versions [{:selections {:euuid nil
-                                              :name nil}}]})]
+                   neyho.eywa.dataset.uuids/dataset
+                   {:euuid dataset-a-uuid}
+                   {:versions [{:selections {:euuid nil
+                                             :name nil}}]})]
       (core/destroy! *db* dataset))
 
     (let [model-after-delete (dataset/deployed-model)
@@ -515,10 +517,10 @@
     (println "\n4. Delete Dataset A")
     (let [dataset-a-uuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"
           dataset (dataset/get-entity
-                    neyho.eywa.dataset.uuids/dataset
-                    {:euuid dataset-a-uuid}
-                    {:versions [{:selections {:euuid nil
-                                              :name nil}}]})]
+                   neyho.eywa.dataset.uuids/dataset
+                   {:euuid dataset-a-uuid}
+                   {:versions [{:selections {:euuid nil
+                                             :name nil}}]})]
       (core/destroy! *db* dataset))
 
     (println "\n5. Verify Product and Category survive, exclusive relation deleted")
@@ -556,12 +558,12 @@
       (assert-true test-name (contains? (:claimed-by item) dataset-a-v2-uuid) "Should have v2 claim")
       (assert-true test-name (contains? (:claimed-by item) dataset-a-v1-uuid) "Should have v1 claim (preserved for rollback)"))
     (core/destroy! *db* (dataset/get-entity
-                          neyho.eywa.dataset.uuids/dataset
-                          {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
-                          {:euuid nil
-                           :name nil
-                           :versions [{:selections
-                                       {:euuid nil}}]}))
+                         neyho.eywa.dataset.uuids/dataset
+                         {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
+                         {:euuid nil
+                          :name nil
+                          :versions [{:selections
+                                      {:euuid nil}}]}))
     nil))
 
 ;; Helper datasets for recall testing
@@ -629,9 +631,9 @@
             category (core/get-entity model #uuid "aaaaaaaa-1111-0000-0000-000000000002")
             dataset (try
                       (dataset/get-entity
-                        neyho.eywa.dataset.uuids/dataset
-                        {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
-                        {:euuid nil})
+                       neyho.eywa.dataset.uuids/dataset
+                       {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
+                       {:euuid nil})
                       (catch Throwable _ nil))]
         (assert-true test-name (nil? product) "Product should not exist in model after recall")
         (assert-true test-name (nil? category) "Category should not exist in model after recall")
@@ -758,14 +760,14 @@
                                 (core/add-entity role-entity)
                                 (core/add-entity permission-entity))
         model-with-relations (core/add-relation
-                               model-with-entities
-                               (make-relation
-                                 {:euuid #uuid "ffffffff-2222-0000-0000-000000000001"
-                                  :from #uuid "ffffffff-1111-0000-0000-000000000002"
-                                  :to #uuid "ffffffff-1111-0000-0000-000000000003"
-                                  :from-label "test_role"
-                                  :to-label "test_permission"
-                                  :cardinality "m2m"}))]
+                              model-with-entities
+                              (make-relation
+                               {:euuid #uuid "ffffffff-2222-0000-0000-000000000001"
+                                :from #uuid "ffffffff-1111-0000-0000-000000000002"
+                                :to #uuid "ffffffff-1111-0000-0000-000000000003"
+                                :from-label "test_role"
+                                :to-label "test_permission"
+                                :cardinality "m2m"}))]
     {:euuid #uuid "ffffffff-0000-0000-0000-000000000002"
      :name "Lifecycle Test v2"
      :version "2.0.0"
@@ -1120,10 +1122,10 @@
     ;; Delete Dataset A
     (try
       (let [dataset (dataset/get-entity
-                      neyho.eywa.dataset.uuids/dataset
-                      {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
-                      {:versions [{:selections {:euuid nil
-                                                :name nil}}]})]
+                     neyho.eywa.dataset.uuids/dataset
+                     {:euuid #uuid "aaaaaaaa-0000-0000-0000-000000000000"}
+                     {:versions [{:selections {:euuid nil
+                                               :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset A")))
@@ -1133,10 +1135,10 @@
     ;; Delete Dataset B
     (try
       (let [dataset (dataset/get-entity
-                      neyho.eywa.dataset.uuids/dataset
-                      {:euuid #uuid "bbbbbbbb-0000-0000-0000-000000000000"}
-                      {:versions [{:selections {:euuid nil
-                                                :name nil}}]})]
+                     neyho.eywa.dataset.uuids/dataset
+                     {:euuid #uuid "bbbbbbbb-0000-0000-0000-000000000000"}
+                     {:versions [{:selections {:euuid nil
+                                               :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset B")))
@@ -1146,10 +1148,10 @@
     ;; Delete Dataset C
     (try
       (let [dataset (dataset/get-entity
-                      neyho.eywa.dataset.uuids/dataset
-                      {:euuid #uuid "cccccccc-0000-0000-0000-000000000000"}
-                      {:versions [{:selections {:euuid nil
-                                                :name nil}}]})]
+                     neyho.eywa.dataset.uuids/dataset
+                     {:euuid #uuid "cccccccc-0000-0000-0000-000000000000"}
+                     {:versions [{:selections {:euuid nil
+                                               :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset C")))
@@ -1159,10 +1161,10 @@
     ;; Delete Dataset D
     (try
       (let [dataset (dataset/get-entity
-                      neyho.eywa.dataset.uuids/dataset
-                      {:euuid #uuid "dddddddd-0000-0000-0000-000000000000"}
-                      {:versions [{:selections {:euuid nil
-                                                :name nil}}]})]
+                     neyho.eywa.dataset.uuids/dataset
+                     {:euuid #uuid "dddddddd-0000-0000-0000-000000000000"}
+                     {:versions [{:selections {:euuid nil
+                                               :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset D")))
@@ -1172,10 +1174,10 @@
     ;; Delete Dataset E
     (try
       (let [dataset (dataset/get-entity
-                      neyho.eywa.dataset.uuids/dataset
-                      {:euuid #uuid "eeeeeeee-0000-0000-0000-000000000000"}
-                      {:versions [{:selections {:euuid nil
-                                                :name nil}}]})]
+                     neyho.eywa.dataset.uuids/dataset
+                     {:euuid #uuid "eeeeeeee-0000-0000-0000-000000000000"}
+                     {:versions [{:selections {:euuid nil
+                                               :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Dataset E")))
@@ -1185,10 +1187,10 @@
     ;; Delete Lifecycle Dataset
     (try
       (let [dataset (dataset/get-entity
-                      neyho.eywa.dataset.uuids/dataset
-                      {:euuid #uuid "ffffffff-0000-0000-0000-000000000000"}
-                      {:versions [{:selections {:euuid nil
-                                                :name nil}}]})]
+                     neyho.eywa.dataset.uuids/dataset
+                     {:euuid #uuid "ffffffff-0000-0000-0000-000000000000"}
+                     {:versions [{:selections {:euuid nil
+                                               :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted Lifecycle Dataset")))
@@ -1198,10 +1200,10 @@
     ;; Delete UserService Dataset
     (try
       (let [dataset (dataset/get-entity
-                      neyho.eywa.dataset.uuids/dataset
-                      {:euuid #uuid "99999999-0000-0000-0000-000000000000"}
-                      {:versions [{:selections {:euuid nil
-                                                :name nil}}]})]
+                     neyho.eywa.dataset.uuids/dataset
+                     {:euuid #uuid "99999999-0000-0000-0000-000000000000"}
+                     {:versions [{:selections {:euuid nil
+                                               :name nil}}]})]
         (when dataset
           (core/destroy! *db* dataset)
           (println "  ✓ Deleted UserService Dataset")))

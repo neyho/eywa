@@ -62,10 +62,6 @@
     * max
     * min
     * avg")
-  (verify-hashed
-    [this entity-id args]
-    "Function takes entity id and arguments to verify if argument fields match
-    encrypted data")
   (delete-entity
     [this entity-id data]
     "Function takes dataset entity id and data to delete entities from

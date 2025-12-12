@@ -20,8 +20,8 @@
              purge-entity
              search-entity-tree
              search-entity
-             ; aggregate-entity
-             ; aggregate-entity-tree
+             aggregate-entity
+             aggregate-entity-tree
              delete-entity]]
     [neyho.eywa.iam.uuids :as iu]
     [neyho.eywa.lacinia]))
@@ -388,17 +388,7 @@
                                             :_avg {:type (entity->numeric-object to)}
                                             :_sum {:type (entity->numeric-object to)}}})))
                               objects
-                              to-relations)
-                        (assoc objects
-                          (entity->agg-object entity)
-                          {:fields
-                           (reduce
-                             (fn [fields {:keys [to to-label]}]
-                               (if-not (has-numerics? to) fields
-                                       (assoc fields (attribute->gql-field to-label) {:type (entity->agg-part-object to)})))
-                             nil
-                             to-relations)}))
-
+                              to-relations))
                   ;;
                       (not-empty to-relations)
                       (assoc
@@ -435,7 +425,37 @@
                                             {:type 'Float
                                              :args {:_where {:type (entity->search-operator entity)}}}))
                                    nil
-                                   numerics)}))))))
+                                   numerics)})
+                  ;;
+                      true
+                      (assoc (entity->agg-object entity)
+                        {:fields
+                         (cond->
+                           (reduce
+                             (fn [fields {:keys [to to-label]}]
+                               (if (not-empty to-label)
+                                 (assoc fields (attribute->gql-field to-label)
+                                        {:type (entity->agg-object to)
+                                         :args {:_where {:type (entity->search-operator to)}}})
+                                 fields))
+                             (reduce
+                               (fn [fields {t :type
+                                            n :name}]
+                                 (assoc fields (attribute->gql-field n)
+                                        (case t
+                                          "int"
+                                          {:type :IntAggregate
+                                           :args (zipmap
+                                                   [:_gt :_lt :_eq :_neq :_ge :_le]
+                                                   (repeat {:type 'Int}))}
+                                          "float"
+                                          {:type :FloatAggregate
+                                           :args (zipmap
+                                                   [:_gt :_lt :_eq :_neq :_ge :_le]
+                                                   (repeat {:type 'Float}))})))
+                               {:count {:type 'Int}}
+                               (numerics? entity))
+                             to-relations))}))))))
         {:Currency
          {:fields
           {:currency {:type :currency_enum
@@ -457,7 +477,20 @@
                     (repeat {:type 'TimePeriod}))
                   (zipmap
                     [:_contains :_exclude]
-                    (repeat {:type 'Timestamp})))}}
+                    (repeat {:type 'Timestamp})))}
+        ;;
+         :IntAggregate
+         {:fields
+          {:min {:type 'Int}
+           :max {:type 'Int}
+           :sum {:type 'Int}
+           :avg {:type 'Int}}}
+         :FloatAggregate
+         {:fields
+          {:min {:type 'Float}
+           :max {:type 'Float}
+           :sum {:type 'Float}
+           :avg {:type 'Float}}}}
         entities))))
 
 (defn generate-lacinia-input-objects
@@ -850,6 +883,35 @@
                          (catch Throwable e
                            (log/error e "Couldn't search dataset")
                            (throw e))))}
+                    args (assoc :args args)))
+                     ;; AGGREGATE
+                (csk/->camelCaseKeyword (str "aggregate " ename))
+                (let [args (reduce
+                             (fn [r {atype :type
+                                     aname :name
+                                     :as attribute}]
+                               (if (ignored-field-type? atype) r
+                                   (assoc r (keyword (normalize-name aname))
+                                          (attribute->type entity attribute))))
+                             {:_where {:type (entity->search-operator entity)}
+                              :euuid {:type :UUIDQueryOperator}}
+                             search-arguments)]
+                  (cond->
+                    {:type (entity->agg-object entity)
+                     :resolve
+                     (fn aggregate [context data _]
+                       (try
+                         (log-query context)
+                         (let [selection (executor/selections-tree context)]
+                           (log/debugf
+                             "Aggregating entity\n%s"
+                             {:entity ename
+                              :data data
+                              :selection selection})
+                           (aggregate-entity *db* euuid data selection))
+                         (catch Throwable e
+                           (log/errorf e "Couldn't resolve AGGREGATE")
+                           (throw e))))}
                     args (assoc :args args))))
               ;; Add recursive getters
               (not-empty recursions)
@@ -910,6 +972,37 @@
                                      (search-entity-tree *db* euuid (keyword (normalize-name l)) data selection))
                                    (catch Throwable e
                                      (log/error e "Couldn't resolve SEARCH TREE")
+                                     (throw e))))}
+                              args (assoc :args args)))
+                      ;;
+                          (csk/->camelCaseKeyword (str "aggregate " ename " tree by " l))
+                          (let [args (reduce
+                                       (fn [r {atype :type
+                                               aname :name
+                                               :as attribute}]
+                                         (if (ignored-field-type? atype) r
+                                             (assoc
+                                               r
+                                               (keyword (normalize-name aname))
+                                               (attribute->type entity attribute))))
+                                       {:_where {:type (entity->search-operator entity)}
+                                        :euuid {:type :UUIDQueryOperator}}
+                                       search-arguments)]
+                            (cond->
+                              {:type (entity->agg-object entity)
+                               :resolve
+                               (fn tree-aggregator [context data _]
+                                 (try
+                                   (log-query context)
+                                   (let [selection (executor/selections-tree context)]
+                                     (log/debugf
+                                       "Aggregating entity tree\n%s"
+                                       {:entity ename
+                                        :data data
+                                        :selection selection})
+                                     (aggregate-entity-tree *db* euuid (keyword (normalize-name l)) data selection))
+                                   (catch Throwable e
+                                     (log/error e "Couldn't resolve AGGREGATE TREE")
                                      (throw e))))}
                               args (assoc :args args)))))
                       qs

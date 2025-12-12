@@ -291,44 +291,47 @@
    (deploy-dataset context {:version dataset} nil)))
 
 ;; @hook
-(defn prepare-deletion-context
+(defn destroy-dataset
   [ctx {:keys [euuid]
         :as args} v]
-  [(if (some? euuid)
-     (if-let [dataset (db/get-entity
-                        *db*
-                        du/dataset
-                        {:euuid euuid}
-                        {:name nil
-                         :euuid nil
-                         :versions [{:args {:_order_by [{:modified_on :asc}]
-                                            :_where {:deployed {:_boolean :TRUE}}}
-                                     :selections {:name nil
-                                                  :euuid nil
-                                                  :model nil}}]})]
-       (do
-         (log/infof "Preparing deletion context for dataset: %s" (:name dataset))
-         (cond-> ctx
-           (and (some? euuid) dataset)
-           (assoc ::destroy dataset)))
-       ctx)
-     ctx)
-   args
-   v])
+  (when (some? euuid)
+    (when-let [dataset (db/get-entity
+                         *db*
+                         du/dataset
+                         {:euuid euuid}
+                         {:name nil
+                          :euuid nil
+                          :versions [{:args {:_order_by [{:modified_on :asc}]
+                                             :_where {:deployed {:_boolean :TRUE}}}
+                                      :selections {:name nil
+                                                   :euuid nil
+                                                   :model nil}}]})]
+      ; (def dataset dataset)
+      ; (def euuid euuid)
+      ; (def ctx ctx)
+      ; (throw (Exception. "HI"))
+      (log/infof "User %s destroying dataset %s" (:name *user*) (:name dataset))
+      (dataset/destroy! *db* dataset)
+      (async/put!
+        subscription
+        {:topic :refreshedGlobalDataset
+         :data {:name "Global"
+                :model (dataset/get-model *db*)}})))
+  [ctx args v])
 
 ;; @hook
-(defn destroy-linked-versions
-  [{destroy ::destroy
-    :as ctx} args v]
-  (when destroy
-    (log/infof "User %s destroying dataset %s" (:name *user*) (:name destroy))
-    (dataset/destroy! *db* destroy)
-    (comment
-      (dataset/get-relations (-> destroy :versions first :model)))
-    (async/put! subscription
-                {:topic :refreshedGlobalDataset
-                 :data {:name "Global"
-                        :model (dataset/get-model *db*)}}))
+(defn recall-version
+  [{:as ctx} args v]
+  (try
+    (dataset/recall! *db* args)
+    (catch clojure.lang.ExceptionInfo ex
+      (when (not= :version-not-deployed (:type (ex-data ex)))
+        (throw ex))))
+  (async/put!
+    subscription
+    {:topic :refreshedGlobalDataset
+     :data {:name "Global"
+            :model (dataset/get-model *db*)}})
   [ctx args v])
 
 (defn is-supported?
@@ -442,6 +445,7 @@
          ;; .getValue returns the textual representation (for json/jsonb it's a JSON string)
          (.writeString json-gen (.getValue pgobj))))
      (dataset/reload db {:model (dataset/get-last-deployed db 0)})
+     (dataset/reload db)
      (lacinia/add-directive :hook wrap-hooks)
      (lacinia/add-shard ::dataset-directives (slurp (io/resource "dataset_directives.graphql")))
      (lacinia/add-shard ::datasets (slurp (io/resource "datasets.graphql")))

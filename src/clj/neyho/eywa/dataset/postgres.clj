@@ -89,7 +89,7 @@
                   old-type
                   new-type
                   (:error validation))
-          {:type (or (:type validation) ::core/forbidden-conversion)
+          {:type (or (:type validation) :dataset/forbidden-conversion)
            :entity (:name entity)
            :attribute (:name attribute)
            :from-type old-type
@@ -111,17 +111,25 @@
 (defn type->ddl
   "Converts type to DDL syntax"
   [t]
-  (case t
-    "currency" "jsonb"
-    ("avatar" "string" "hashed") "text"
-    "timestamp" "timestamp"
-    ("json" "encrypted" "timeperiod") "jsonb"
-    "transit" "text"
-    "user" (str "bigint references \"" (user-table) "\"(_eid) on delete set null")
-    "group" (str "bigint references \"" (group-table) "\"(_eid) on delete set null")
-    "role" (str "bigint references \"" (role-table) "\"(_eid) on delete set null")
-    "int" "bigint"
-    t))
+  (try
+    (case t
+      "currency" "jsonb"
+      ("avatar" "string" "hashed") "text"
+      "timestamp" "timestamp"
+      ("json" "encrypted" "timeperiod") "jsonb"
+      "transit" "text"
+      "user" (str "bigint references \"" (user-table) "\"(_eid) on delete set null")
+      "group" (str "bigint references \"" (group-table) "\"(_eid) on delete set null")
+      "role" (str "bigint references \"" (role-table) "\"(_eid) on delete set null")
+      "int" "bigint"
+      t)
+    (catch Throwable e
+      (throw (ex-info
+               (format "Failed to generate DDL for type '%s'" t)
+               {:type ::type-ddl-generation-error
+                :phase :ddl-generation
+                :attribute-type t}
+               e)))))
 
 (defn attribute->ddl
   "Function converts attribute to DDL syntax"
@@ -198,62 +206,83 @@
     as :attributes
     {cs :constraints} :configuration
     :as entity}]
-  (let [table (entity->table-name entity)
-        as' (keep #(attribute->ddl entity %) as)
-        pk ["_eid bigserial not null primary key"
-            "euuid uuid not null unique default uuid_generate_v1()"]
-        cs' (keep-indexed
-              (fn [idx ids]
-                (when (not-empty ids)
-                  (format
-                    "constraint \"%s\" unique(%s)"
-                    (str table "_eucg_" idx)
-                    (clojure.string/join
-                      ","
-                      (map
-                        (fn [id]
-                          (log/infof "Generating constraint %s %s" n id)
-                          (->
-                            (core/get-attribute entity id)
-                            :name
-                            column-name))
-                        ids)))))
-              (:unique cs))
-        rows (concat pk as' cs')]
-    (format
-      "create table \"%s\" (\n  %s\n)"
-      table
-      (clojure.string/join ",\n  " rows))))
+  (try
+    (let [table (entity->table-name entity)
+          as' (keep #(attribute->ddl entity %) as)
+          pk ["_eid bigserial not null primary key"
+              "euuid uuid not null unique default uuid_generate_v1()"]
+          cs' (keep-indexed
+                (fn [idx ids]
+                  (when (not-empty ids)
+                    (format
+                      "constraint \"%s\" unique(%s)"
+                      (str table "_eucg_" idx)
+                      (clojure.string/join
+                        ","
+                        (map
+                          (fn [id]
+                            (log/infof "Generating constraint %s %s" n id)
+                            (->
+                              (core/get-attribute entity id)
+                              :name
+                              column-name))
+                          ids)))))
+                (:unique cs))
+          rows (concat pk as' cs')]
+      (format
+        "create table \"%s\" (\n  %s\n)"
+        table
+        (clojure.string/join ",\n  " rows)))
+    (catch Throwable e
+      (throw (ex-info
+               (format "Failed to generate CREATE TABLE DDL for entity '%s'" n)
+               {:type ::entity-ddl-generation-error
+                :phase :ddl-generation
+                :entity-name n
+                :entity-euuid (:euuid entity)
+                :table-name (try (entity->table-name entity) (catch Throwable _ nil))
+                :attribute-count (count as)
+                :has-constraints (some? cs)}
+               e)))))
 
 (defn generate-relation-ddl
   "Returns relation table DDL for given model and target relation"
   [_ {f :from
       t :to
       :as relation}]
-  (let [table (relation->table-name relation)
-        from-table (entity->table-name f)
-        to-table (entity->table-name t)
-        from-field (entity->relation-field f)
-        to-field (entity->relation-field t)]
-    (comment
-      (entity->relation-field (:from relation))
-      (core/cloned? (:to relation))
-      (core/cloned? (:from relation))
-      (entity->relation-field (:to relation)))
-    (format
-      "create table %s(\n %s\n)"
-      table
-      ;; Create table
-      (if (= f t)
-        (clojure.string/join
-          ",\n "
-          [(str to-field " bigint not null references \"" to-table "\"(_eid) on delete cascade")
-           (str "unique(" to-field ")")])
-        (clojure.string/join
-          ",\n "
-          [(str from-field " bigint not null references \"" from-table "\"(_eid) on delete cascade")
-           (str to-field " bigint not null references \"" to-table "\"(_eid) on delete cascade")
-           (str "unique(" from-field "," to-field ")")])))))
+  (try
+    (let [table (relation->table-name relation)
+          from-table (entity->table-name f)
+          to-table (entity->table-name t)
+          from-field (entity->relation-field f)
+          to-field (entity->relation-field t)]
+      (format
+        "create table %s(\n %s\n)"
+        table
+        ;; Create table
+        (if (= f t)
+          (clojure.string/join
+            ",\n "
+            [(str to-field " bigint not null references \"" to-table "\"(_eid) on delete cascade")
+             (str "unique(" to-field ")")])
+          (clojure.string/join
+            ",\n "
+            [(str from-field " bigint not null references \"" from-table "\"(_eid) on delete cascade")
+             (str to-field " bigint not null references \"" to-table "\"(_eid) on delete cascade")
+             (str "unique(" from-field "," to-field ")")]))))
+    (catch Throwable e
+      (throw (ex-info
+               (format "Failed to generate CREATE TABLE DDL for relation between '%s' and '%s'"
+                       (:name f) (:name t))
+               {:type ::relation-ddl-generation-error
+                :phase :ddl-generation
+                :from-entity (:name f)
+                :from-entity-euuid (:euuid f)
+                :to-entity (:name t)
+                :to-entity-euuid (:euuid t)
+                :relation-euuid (:euuid relation)
+                :is-recursive (= f t)}
+               e)))))
 
 (defn generate-relation-indexes-ddl
   "Returns relation table DDL for given model and target relation"
@@ -403,7 +432,7 @@
                     (= "int" type) (str " using(trim(" column ")::integer)")
                     (= "float" type) (str " using(trim(" column ")::float)")
                     (= "string" type) (str " using(" column "::text)")
-                   ; (= "json" type) (str " using(" column "::jsonb)")
+                    ; (= "json" type) (str " using(" column "::jsonb)")
                     (= "json" type) (str " using\n case when "
                                          column " ~ '^\\s*\\{.*\\}\\s*$' OR "
                                          column " ~ '^\\s*\\[.*\\]\\s*$'\nthen " column
@@ -598,43 +627,113 @@
 (defn transform-relation
   [tx {:keys [from to]
        :as relation}]
-  (let [diff (core/diff relation)
-        _ (log/tracef "Transforming relation\ndiff=%s\nfrom=%s\nto=%s" diff (pr-str from) (pr-str to))
-        from-diff (:from diff)
-        to-diff (:to diff)
-        old-from (core/suppress from)
-        old-to (core/suppress to)
-        old-relation (core/suppress relation)
-        old-name (relation->table-name old-relation)
-        ;; Assoc old from and to entities
-        ;; This will be handled latter
-        new-name (relation->table-name relation)]
+  (try
+    (let [diff (core/diff relation)
+          _ (log/tracef "Transforming relation\ndiff=%s\nfrom=%s\nto=%s" diff (pr-str from) (pr-str to))
+          from-diff (:from diff)
+          to-diff (:to diff)
+          old-from (core/suppress from)
+          old-to (core/suppress to)
+          old-relation (core/suppress relation)
+          old-name (relation->table-name old-relation)
+          ;; Assoc old from and to entities
+          ;; This will be handled latter
+          new-name (relation->table-name relation)]
 
-    ;; When name has changed
-    (when (not= old-name new-name)
-      (let [sql (format
-                  "alter table %s rename to %s"
-                  old-name new-name)]
-        (log/debugf "Renaming relation table %s->%s\n%s" old-name new-name sql)
-        (execute-one! tx [sql])))
-    ;; when to name has changed than change table column
-    (when (:name to-diff)
-      (let [o (entity->relation-field old-to)
-            n (entity->relation-field to)
-            sql (format
-                  "alter table %s rename column %s to %s"
-                  new-name o n)]
-        (log/debugf "Renaming relation table %s -> %s\n%s" old-name new-name sql)
-        (execute-one! tx [sql])))
-    ;; when from name has changed than change table column
-    (when (:name from-diff)
-      (let [o (entity->relation-field old-from)
-            n (entity->relation-field from)
-            sql (format
-                  "alter table %s rename column %s to %s"
-                  new-name o n)]
-        (log/debugf "Renaming relation %s -> %s\n%s" old-name new-name sql)
-        (execute-one! tx [sql])))))
+      ;; When name has changed
+      (when (not= old-name new-name)
+        (let [sql (format
+                    "alter table %s rename to %s"
+                    old-name new-name)]
+          (log/debugf "Renaming relation table %s->%s\n%s" old-name new-name sql)
+          (try
+            (execute-one! tx [sql])
+            (catch Throwable e
+              (throw (ex-info
+                       (format "Failed to rename relation table from '%s' to '%s' (relation: %s → %s)"
+                               old-name new-name (:name from) (:name to))
+                       {:type ::relation-rename-error
+                        :phase :ddl-execution
+                        :operation :rename-table
+                        :from-entity (:name from)
+                        :from-entity-euuid (:euuid from)
+                        :to-entity (:name to)
+                        :to-entity-euuid (:euuid to)
+                        :relation-euuid (:euuid relation)
+                        :old-table-name old-name
+                        :new-table-name new-name
+                        :sql sql}
+                       e))))))
+      ;; when to name has changed than change table column
+      (when (:name to-diff)
+        (let [o (entity->relation-field old-to)
+              n (entity->relation-field to)
+              sql (format
+                    "alter table %s rename column %s to %s"
+                    new-name o n)]
+          (log/debugf "Renaming relation table %s -> %s\n%s" old-name new-name sql)
+          (try
+            (execute-one! tx [sql])
+            (catch Throwable e
+              (throw (ex-info
+                       (format "Failed to rename 'to' column in relation table '%s' from '%s' to '%s' (relation: %s → %s)"
+                               new-name o n (:name from) (:name to))
+                       {:type ::relation-column-rename-error
+                        :phase :ddl-execution
+                        :operation :rename-to-column
+                        :from-entity (:name from)
+                        :from-entity-euuid (:euuid from)
+                        :to-entity (:name to)
+                        :to-entity-euuid (:euuid to)
+                        :relation-euuid (:euuid relation)
+                        :table-name new-name
+                        :old-column-name o
+                        :new-column-name n
+                        :sql sql}
+                       e))))))
+      ;; when from name has changed than change table column
+      (when (:name from-diff)
+        (let [o (entity->relation-field old-from)
+              n (entity->relation-field from)
+              sql (format
+                    "alter table %s rename column %s to %s"
+                    new-name o n)]
+          (log/debugf "Renaming relation %s -> %s\n%s" old-name new-name sql)
+          (try
+            (execute-one! tx [sql])
+            (catch Throwable e
+              (throw (ex-info
+                       (format "Failed to rename 'from' column in relation table '%s' from '%s' to '%s' (relation: %s → %s)"
+                               new-name o n (:name from) (:name to))
+                       {:type ::relation-column-rename-error
+                        :phase :ddl-execution
+                        :operation :rename-from-column
+                        :from-entity (:name from)
+                        :from-entity-euuid (:euuid from)
+                        :to-entity (:name to)
+                        :to-entity-euuid (:euuid to)
+                        :relation-euuid (:euuid relation)
+                        :table-name new-name
+                        :old-column-name o
+                        :new-column-name n
+                        :sql sql}
+                       e)))))))
+    (catch clojure.lang.ExceptionInfo e
+      ;; Re-throw ex-info with preserved context
+      (throw e))
+    (catch Throwable e
+      ;; Catch any other errors during relation transformation
+      (throw (ex-info
+               (format "Failed to transform relation: %s → %s"
+                       (:name from) (:name to))
+               {:type ::relation-transformation-error
+                :phase :ddl-execution
+                :from-entity (:name from)
+                :from-entity-euuid (:euuid from)
+                :to-entity (:name to)
+                :to-entity-euuid (:euuid to)
+                :relation-euuid (:euuid relation)}
+               e)))))
 
 (defn column-exists?
   [tx table column]
@@ -700,21 +799,83 @@
                 :let [table-sql (generate-entity-ddl entity)
                       enum-sql (generate-entity-enums-ddl entity)
                       table (entity->table-name entity)]]
-          (when (not-empty enum-sql)
-            (log/debugf "Adding entity %s enums\n%s" n enum-sql)
-            (execute! tx [enum-sql]))
-          (log/debugf "Adding entity %s to DB\n%s" n table-sql)
-          (execute-one! tx [table-sql])
-          (let [sql (format
-                      "alter table \"%s\" add column \"%s\" bigint references \"%s\"(_eid) on delete set null"
-                      table "modified_by" amt)]
-            (log/tracef "Adding table audit reference[who] column\n%s" sql)
-            (execute-one! tx [sql]))
-          (let [sql (format
-                      "alter table \"%s\" add column \"%s\" timestamp not null default localtimestamp"
-                      table "modified_on")]
-            (log/tracef "Adding table audit reference[when] column\n%s" sql)
-            (execute-one! tx [sql]))))
+          (try
+            (when (not-empty enum-sql)
+              (log/debugf "Adding entity %s enums\n%s" n enum-sql)
+              (try
+                (execute! tx [enum-sql])
+                (catch Throwable e
+                  (throw (ex-info
+                           (format "Failed to create enum types for entity '%s'" n)
+                           {:type ::entity-enum-creation-error
+                            :phase :ddl-execution
+                            :operation :create-enum-types
+                            :entity-name n
+                            :entity-euuid (:euuid entity)
+                            :table-name table
+                            :sql enum-sql}
+                           e)))))
+            (log/debugf "Adding entity %s to DB\n%s" n table-sql)
+            (try
+              (execute-one! tx [table-sql])
+              (catch Throwable e
+                (throw (ex-info
+                         (format "Failed to create table for entity '%s'" n)
+                         {:type ::entity-table-creation-error
+                          :phase :ddl-execution
+                          :operation :create-table
+                          :entity-name n
+                          :entity-euuid (:euuid entity)
+                          :table-name table
+                          :sql table-sql}
+                         e))))
+            (let [sql (format
+                        "alter table \"%s\" add column \"%s\" bigint references \"%s\"(_eid) on delete set null"
+                        table "modified_by" amt)]
+              (log/tracef "Adding table audit reference[who] column\n%s" sql)
+              (try
+                (execute-one! tx [sql])
+                (catch Throwable e
+                  (throw (ex-info
+                           (format "Failed to add audit 'modified_by' column to entity '%s'" n)
+                           {:type ::entity-audit-column-error
+                            :phase :ddl-execution
+                            :operation :add-audit-who-column
+                            :entity-name n
+                            :entity-euuid (:euuid entity)
+                            :table-name table
+                            :sql sql}
+                           e)))))
+            (let [sql (format
+                        "alter table \"%s\" add column \"%s\" timestamp not null default localtimestamp"
+                        table "modified_on")]
+              (log/tracef "Adding table audit reference[when] column\n%s" sql)
+              (try
+                (execute-one! tx [sql])
+                (catch Throwable e
+                  (throw (ex-info
+                           (format "Failed to add audit 'modified_on' column to entity '%s'" n)
+                           {:type ::entity-audit-column-error
+                            :phase :ddl-execution
+                            :operation :add-audit-when-column
+                            :entity-name n
+                            :entity-euuid (:euuid entity)
+                            :table-name table
+                            :sql sql}
+                           e)))))
+            (catch clojure.lang.ExceptionInfo e
+              ;; Re-throw ex-info with preserved context
+              (throw e))
+            (catch Throwable e
+              ;; Catch any other unexpected errors during entity creation
+              (throw (ex-info
+                       (format "Unexpected error while creating entity '%s'" n)
+                       {:type ::entity-creation-error
+                        :phase :ddl-execution
+                        :entity-name n
+                        :entity-euuid (:euuid entity)
+                        :table-name table}
+                       e))))))
       ;; Change entities
       (when (not-empty ce) (log/info "Checking changed entities..."))
       (doseq [{n :name
@@ -723,7 +884,19 @@
         (log/debugf "Changing entity %s" n)
         (doseq [statement sql]
           (log/debugf "Executing statement %s\n%s" n statement)
-          (execute-one! tx [statement])))
+          (try
+            (execute-one! tx [statement])
+            (catch Throwable e
+              (throw (ex-info
+                       (format "Failed to execute DDL statement for entity '%s'" n)
+                       {:type ::entity-change-error
+                        :phase :ddl-execution
+                        :operation :alter-entity
+                        :entity-name n
+                        :entity-euuid (:euuid entity)
+                        :table-name (entity->table-name entity)
+                        :sql statement}
+                       e))))))
       ;; Change relations
       (when (not-empty cr)
         (log/info "Checking changed trans entity relations..."))
@@ -759,42 +932,149 @@
                             "alter table %s add %s bigint references \"%s\"(_eid) on delete cascade"
                             table tl table)]
                   (log/debug "Creating recursive relation for entity %s\n%s" tname sql)
-                  (execute-one! tx [sql])))))
+                  (try
+                    (execute-one! tx [sql])
+                    (catch Throwable ex
+                      (throw (ex-info
+                               (format "Failed to create recursive relation column for entity '%s'" tname)
+                               {:type ::recursive-relation-creation-error
+                                :phase :ddl-execution
+                                :operation :add-recursive-column
+                                :entity-name tname
+                                :entity-euuid (:euuid e)
+                                :relation-euuid euuid
+                                :table-name table
+                                :column-name tl
+                                :sql sql}
+                               ex))))))))
           ;; Apply changes
           (when diff
             (let [sql (format
                         "alter table %s rename column %s to %s"
                         table previous-column (column-name tl))]
               (log/debugf "Updating recursive relation for entity %s\n%s" tname sql)
-              (execute-one! tx [sql])))))
+              (try
+                (execute-one! tx [sql])
+                (catch Throwable ex
+                  (throw (ex-info
+                           (format "Failed to rename recursive relation column for entity '%s'" tname)
+                           {:type ::recursive-relation-rename-error
+                            :phase :ddl-execution
+                            :operation :rename-recursive-column
+                            :entity-name tname
+                            :entity-euuid (:euuid e)
+                            :relation-euuid euuid
+                            :table-name table
+                            :old-column-name previous-column
+                            :new-column-name (column-name tl)
+                            :sql sql}
+                           ex))))))))
       ;; Generate new relations
       (when (not-empty nr) (log/info "Generating new relations..."))
-      (doseq [{{tname :name} :to
-               {fname :name} :from
+      (doseq [{{tname :name
+                :as to-entity} :to
+               {fname :name
+                :as from-entity} :from
                :as relation} nr
               :let [sql (generate-relation-ddl projection relation)
                     [from-idx to-idx] (generate-relation-indexes-ddl projection relation)]]
-        (log/debugf "Connecting entities %s <-> %s\n%s" fname tname sql)
-        (execute-one! tx [sql])
-        (when from-idx
-          (log/debugf "Creating from indexes for relation: %s <-> %s\n%s" fname tname from-idx)
-          (execute-one! tx [from-idx]))
-        (when from-idx
-          (log/debugf "Creating to indexes for relation: %s <-> %s\n%s" fname tname from-idx)
-          (execute-one! tx [to-idx])))
+        (try
+          (log/debugf "Connecting entities %s <-> %s\n%s" fname tname sql)
+          (try
+            (execute-one! tx [sql])
+            (catch Throwable e
+              (throw (ex-info
+                       (format "Failed to create relation table between '%s' and '%s'" fname tname)
+                       {:type ::relation-creation-error
+                        :phase :ddl-execution
+                        :operation :create-relation-table
+                        :from-entity fname
+                        :from-entity-euuid (:euuid from-entity)
+                        :to-entity tname
+                        :to-entity-euuid (:euuid to-entity)
+                        :relation-euuid (:euuid relation)
+                        :table-name (relation->table-name relation)
+                        :sql sql}
+                       e))))
+          (when from-idx
+            (log/debugf "Creating from indexes for relation: %s <-> %s\n%s" fname tname from-idx)
+            (try
+              (execute-one! tx [from-idx])
+              (catch Throwable e
+                (throw (ex-info
+                         (format "Failed to create 'from' index for relation between '%s' and '%s'" fname tname)
+                         {:type ::relation-index-creation-error
+                          :phase :ddl-execution
+                          :operation :create-from-index
+                          :from-entity fname
+                          :from-entity-euuid (:euuid from-entity)
+                          :to-entity tname
+                          :to-entity-euuid (:euuid to-entity)
+                          :relation-euuid (:euuid relation)
+                          :table-name (relation->table-name relation)
+                          :sql from-idx}
+                         e)))))
+          (when to-idx
+            (log/debugf "Creating to indexes for relation: %s <-> %s\n%s" fname tname to-idx)
+            (try
+              (execute-one! tx [to-idx])
+              (catch Throwable e
+                (throw (ex-info
+                         (format "Failed to create 'to' index for relation between '%s' and '%s'" fname tname)
+                         {:type ::relation-index-creation-error
+                          :phase :ddl-execution
+                          :operation :create-to-index
+                          :from-entity fname
+                          :from-entity-euuid (:euuid from-entity)
+                          :to-entity tname
+                          :to-entity-euuid (:euuid to-entity)
+                          :relation-euuid (:euuid relation)
+                          :table-name (relation->table-name relation)
+                          :sql to-idx}
+                         e)))))
+          (catch clojure.lang.ExceptionInfo e
+            ;; Re-throw ex-info with preserved context
+            (throw e))
+          (catch Throwable e
+            ;; Catch any other unexpected errors during relation creation
+            (throw (ex-info
+                     (format "Unexpected error while creating relation between '%s' and '%s'" fname tname)
+                     {:type ::relation-creation-error
+                      :phase :ddl-execution
+                      :from-entity fname
+                      :from-entity-euuid (:euuid from-entity)
+                      :to-entity tname
+                      :to-entity-euuid (:euuid to-entity)
+                      :relation-euuid (:euuid relation)}
+                     e)))))
       ;; Add new recursive relations
       (when (not-empty nrr)
         (log/info "Adding new recursive relations..."))
       (doseq [{{tname :name
                 :as e} :to
-               tl :to-label} nrr
+               tl :to-label
+               rel-euuid :euuid} nrr
               :when (not-empty tl)
               :let [table (entity->table-name e)
                     sql (format
                           "alter table %s add %s bigint references \"%s\"(_eid) on delete cascade"
                           table (column-name tl) table)]]
         (log/debug "Creating recursive relation for entity %s\n%s" tname sql)
-        (execute-one! tx [sql])))))
+        (try
+          (execute-one! tx [sql])
+          (catch Throwable ex
+            (throw (ex-info
+                     (format "Failed to add new recursive relation column for entity '%s'" tname)
+                     {:type ::recursive-relation-creation-error
+                      :phase :ddl-execution
+                      :operation :add-new-recursive-column
+                      :entity-name tname
+                      :entity-euuid (:euuid e)
+                      :relation-euuid rel-euuid
+                      :table-name table
+                      :column-name (column-name tl)
+                      :sql sql}
+                     ex))))))))
 
 (defn model->schema [model]
   (binding [*model* model]
@@ -886,7 +1166,7 @@
                                :name (:name entity)
                                :constraints (cond->
                                               (get-in entity [:configuration :constraints])
-                                              ;;
+                                                    ;;
                                               (not-empty mandatory-attributes)
                                               (assoc :mandatory mandatory-attributes))
                                :fields fields
@@ -923,7 +1203,6 @@
           :modified_on nil}
          :args {:_order_by {:modified_on :desc}}}]})))
 
-
 (defn deployed-versions
   []
   (dataset/search-entity
@@ -934,6 +1213,21 @@
      :model nil
      :modified_on nil
      :dataset [{:selections {:euuid nil}}]}))
+
+(defn get-version
+  [euuid]
+  (dataset/get-entity
+    du/dataset-version
+    {:euuid euuid}
+    {:euuid nil
+     :model nil
+     :modified_on nil
+     :dataset [{:selections {:euuid nil}}]}))
+
+
+(comment
+  (def version (get-version #uuid "b54595c9-3759-470f-9657-f4b0bc19e294"))
+  (dataset/sync-entity du/dataset-version {:euuid (:euuid version) :deployed true}))
 
 (defn last-deployed-version-per-dataset
   []
@@ -951,12 +1245,11 @@
                                        :_limit 1}}]})]
     (mapcat :versions datasets)))
 
-
 (defn deployed-version-per-dataset-euuids
   []
   (try
     (set (map :euuid (last-deployed-version-per-dataset)))
-    (catch Throwable ex #{})))
+    (catch Throwable _ #{})))
 
 (defn rebuild-global-model
   "Utility function to rebuild the global model from ALL deployed dataset versions.
@@ -1047,7 +1340,6 @@
                         ;              (core/get-relations model))
                         :deployed true)]
 
-
         ;; Mark version as deployed in database
         (sync-entity this du/dataset-version version'')
         ;; Reload current projection so that you can sync data for new model
@@ -1089,13 +1381,12 @@
 
           _ (when-not version
               (throw (ex-info (format "Version %s not found" euuid)
-                              {:type ::version-not-found
+                              {:type :version-not-found
                                :euuid euuid})))
-
           ;; 2. Check if version was deployed
           _ (when-not (:deployed version)
               (throw (ex-info (format "Version %s was never deployed, cannot recall" euuid)
-                              {:type ::version-not-deployed
+                              {:type :version-not-deployed
                                :euuid euuid
                                :version version})))
 
@@ -1226,6 +1517,7 @@
             ;; Case 3: Older version - just reload model without this version
           :else
           (log/infof "Recalled older version %s@%s, rebuilding model" dataset-name (:name version)))
+        (dataset/delete-entity du/dataset-version {:euuid euuid})
         (let [final-model (rebuild-global-model)]
           (dataset/save-model final-model)
           (query/deploy-schema (model->schema final-model))
@@ -1235,21 +1527,20 @@
           (catch Throwable e
             (log/error e "Couldn't add lacinia schema shard"))))))
   ;;
-  (core/destroy! [this {:keys [euuid name]}]
+  (core/destroy! [this {all-versions :versions
+                        :keys [euuid name]}]
     (assert (or name euuid) "Specify dataset name or euuid!")
     ;; Get all versions for this dataset
-    (let [all-versions (get-dataset-versions {:euuid euuid
-                                              :name name})]
-      (when-not (empty? all-versions)
-        (log/infof "Destroying dataset %s: recalling %d versions in reverse order"
-                   (or name (str euuid)) (count all-versions))
+    (when-not (empty? all-versions)
+      (log/infof "Destroying dataset %s: recalling %d versions in reverse order"
+                 (or name (str euuid)) (count all-versions))
         ;; Recall each version in reverse chronological order (most recent first)
         ;; This ensures proper cleanup and rollback behavior
-        (comment
-          (core/recall! this {:euuid (:euuid (first all-versions))})
-          (core/recall! this {:euuid (:euuid (second all-versions))}))
-        (doseq [version all-versions]
-          (core/recall! this {:euuid (:euuid version)})))))
+      (comment
+        (core/recall! this {:euuid (:euuid (first all-versions))})
+        (core/recall! this {:euuid (:euuid (second all-versions))}))
+      (doseq [version all-versions]
+        (core/recall! this {:euuid (:euuid version)}))))
   (core/get-model
     [_]
     (dataset/deployed-model))
@@ -1700,3 +1991,23 @@
             (catch Throwable ex
               (log/error "❌ EX:" ex)
               (log/error "   " statement))))))))
+
+
+
+(comment
+  (def deployed (deployed-versions))
+  (def without-dataset
+    (filter
+      (fn [{{euuid :euuid} :dataset}]
+        (nil? euuid))
+      deployed))
+  (doseq [version without-dataset]
+    (println "DELETING: " (:euuid version))
+    (println (dataset/delete-entity du/dataset-version {:euuid (:euuid version)})))
+  (def versions
+    (dataset/get-entity
+      du/dataset
+      {:euuid #uuid "743a9023-3980-405a-8340-3527d91064d8"}
+      {:versions [{:selections
+                   {:euuid nil
+                    :name nil}}]})))
