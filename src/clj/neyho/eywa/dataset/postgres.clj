@@ -2210,7 +2210,7 @@
   ;; Get structured report (for APIs, programmatic use)
   (def report (healthcheck-report))
   (:healthy? report)  ;; => true/false
-  (:message report)   ;; => "=== Database Health Check ===\n..."
+  (println (:message report))   ;; => "=== Database Health Check ===\n..."
   (:data report)      ;; => {:expected/tables 216 ...}
 
   ;; Print report to stdout
