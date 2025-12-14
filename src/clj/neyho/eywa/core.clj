@@ -14,6 +14,7 @@
     neyho.eywa.dataset.graphql
     neyho.eywa.dataset.postgres
     neyho.eywa.dataset.postgres.query
+    neyho.eywa.db
     neyho.eywa.db.postgres
     [neyho.eywa.env :as env]
     [neyho.eywa.health :as health]
@@ -142,8 +143,9 @@
    (set-superuser)))
 
 (let [padding-left "    "
-      table-length 70
-      hline (str \+ (apply str (repeat (- table-length 2) \-)) \+)]
+      ; table-length 70
+      ; hline (str \+ (apply str (repeat (- table-length 2) \-)) \+)
+      ]
   (defn doctor-table
     [lines]
     (letfn [(row [text]
@@ -170,7 +172,7 @@
     (when (and exit (zero? exit))
       (let [output (some #(when (not-empty %) %) [out err])
             [_ _ version build-time] (re-find #"(version\s+\")([\d\.]+)\"\s*([\d\-]+)" output)
-            [_ build :as all] (re-find #"build(.*?)\)" output)]
+            [_ build] (re-find #"build(.*?)\)" output)]
         {:version version
          :build build
          :build-time build-time}))))
@@ -193,10 +195,10 @@
          :as jinfo} (java-info)]
     (as-> [] lines
       (if (valid-java? jinfo)
-        (conj lines (str "✅ JAVA" (str ": version '" java-version "' is supported")))
+        (conj lines (str "✅ JAVA: version '" java-version "' is supported"))
         (conj lines
-              (str "❌ JAVA" (str ": current version '" java-version "' is not supported"))
-              (str "        Use JAVA versions 11,17,19,21,25"))))))
+              (str "❌ JAVA: current version '" java-version "' is not supported")
+              "        Use JAVA versions 11,17,19,21,25")))))
 
 (defn is-initialized
   []
@@ -227,14 +229,14 @@
     (as-> [] lines
       ;; Check postgres
       (if postgres-error
-        (conj lines (str "❌ POSTGRES" (str ": " postgres-error)))
-        (conj lines (str "✅ POSTGRES ")))
+        (conj lines (str "❌ POSTGRES: " postgres-error))
+        (conj lines "✅ POSTGRES "))
       ;; Check datasets
       (if dataset-error
-        (conj lines (str "❌ DATASETS " (str ": " dataset-error)))
+        (conj lines (str "❌ DATASETS : " dataset-error))
         (if-not postgres-error
-          (conj lines (str "✅ DATASETS"))
-          (conj lines (str "❌ DATASETS " (str ": Postgres not available"))))))))
+          (conj lines "✅ DATASETS")
+          (conj lines "❌ DATASETS : Postgres not available"))))))
 
 (defn doctor []
   (let [lines (reduce
@@ -361,7 +363,7 @@
         "is-initialized" (try
                            (is-initialized)
                            (System/exit 0)
-                           (catch Throwable ex
+                           (catch Throwable _
                              (println "EYWA not initialized")
                              (System/exit 1)))
         "super" (case subcommand
