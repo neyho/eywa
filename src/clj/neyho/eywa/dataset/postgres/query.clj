@@ -1024,7 +1024,6 @@
                                                          (try
                                                            (decrypt-data (walk/keywordize-keys data))
                                                            (catch Throwable _ nil)))
-                                           ("currency" "period") shallow-keywords
                                            nil)]
                         (assoc r k transform)
                         r)))

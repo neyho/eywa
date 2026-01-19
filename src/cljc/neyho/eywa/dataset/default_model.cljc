@@ -13,16 +13,30 @@
     (dataset/generate-uuid))
   (generate-relation-id [_]
     (dataset/generate-uuid))
-  (get-entity [{:keys [entities]} euuid] (get entities euuid))
+  (get-entity [{:keys [entities clones]} euuid]
+    (if-let [e (get entities euuid)]
+      e
+      (when-some [{:keys [entity position]} (get clones euuid)]
+        (when-some [entity (get entities entity)]
+          (assoc entity
+            :euuid euuid
+            :position position
+            :clone true
+            :original (:euuid entity))))))
   (add-entity [this {:keys [euuid] :as entity}]
     (assert (not-any? #{euuid} (map :euuid (dataset/get-entities this))) (str "Model already contains entity " euuid ":" (:name entity)))
     (let [euuid (if (nil? euuid) (dataset/generate-entity-id this) euuid)]
       (assoc-in this [:entities euuid] (assoc entity :euuid euuid))))
   (remove-entity [{:keys [entities] :as this} {:keys [euuid] :as entity}]
-    (let [relations' (map :euuid (dataset/get-entity-relations this entity))]
+    (let [entity (dataset/get-entity this euuid)
+          relations' (map :euuid (dataset/get-entity-relations this entity))]
       (->
        this
-       (update :entities dissoc entities euuid)
+       (update :clones (fn [clones]
+                         (if (dataset/cloned? entity)
+                           (dissoc clones (:euuid entity))
+                           clones)))
+       (update :entities dissoc euuid)
        (update :relations #(reduce dissoc % relations')))))
   (replace-entity
     [this {:keys [euuid position] :as entity} {euuid' :euuid :as replacement}]
@@ -48,8 +62,10 @@
         (dataset/add-entity (assoc replacement :position position)))
         ;; reduce all old connections and reconnect
        old-relations)))
-  (set-entity [this {:keys [euuid] :as entity}]
-    (update this :entities assoc euuid entity))
+  (set-entity [this {:keys [euuid clone] :as entity}]
+    (if clone
+      (assoc-in this [:clones euuid :position] (:position entity))
+      (assoc-in this [:entities euuid] entity)))
   (update-entity [this euuid f]
     (dataset/set-entity this (f (dataset/get-entity this euuid))))
   (get-relation [{:keys [relations] :as this} euuid]
