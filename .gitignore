@@ -1,4 +1,6 @@
 package-lock.json
+.claude/
+CLAUDE.md
 .eywa/
 ./eywa/
 .shadow-cljs/

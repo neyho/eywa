@@ -173,16 +173,17 @@
                   (as-> enums ens
                     ;; This may be required 
                     (assoc enums (entity->attributes-enum entity)
-                           {:values (mapv
-                                      (comp normalize-name :name)
-                                      (filter scalar-attribute? attributes))})
+                           {:values (distinct
+                                      (mapv
+                                        (comp normalize-name :name)
+                                        (filter scalar-attribute? attributes)))})
                     (let [le (filter #(= (:type %) "enum") attributes)]
                       (if (not-empty le)
                         (reduce
                           (fn [enums {config :configuration
                                       :as attribute}]
                             (assoc enums (entity-attribute->enum entity attribute)
-                                   (update config :values #(mapv (comp normalized-enum-value :name) %))))
+                                   (update config :values (comp distinct #(mapv (comp normalized-enum-value :name) %)))))
                           ens
                           le)
                         ens))))
@@ -1204,6 +1205,7 @@
 
 (comment
   (def model (dataset/deployed-model))
+  (def active-model (filter-active-model model))
   (def entity (core/get-entity model #uuid "ec30827b-c1b1-4d1f-889b-77f5bf4b35bf"))
   (core/get-entity model #uuid "c3835dcb-b8d7-40b7-be1c-97b7f50225d0")
   (core/focus-entity-relations model entity)

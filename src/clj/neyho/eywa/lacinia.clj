@@ -11,18 +11,6 @@
     [neyho.eywa.transit
      :refer [<-transit ->transit]]))
 
-(comment
-  (-> @state :shards :neyho.eywa.file.service/shard)
-  (-> compiled
-      deref
-      :Query
-      :fields
-      :__type)
-  ;;
-  (-> compiled
-      deref
-      :User :fields))
-
 (defn deep-merge
   "Recursively merges maps."
   [& maps]
@@ -268,6 +256,7 @@
   (keys (deref compiled))
   (def _shard (slurp (clojure.java.io/resource "tasks.graphql")))
   (-> state deref :directives keys)
+  (-> state deref)
   (parse-schema _shard)
   (def shard *1)
   (add-shard :neyho.eywa.tasks/tasks _shard))

@@ -1,43 +1,43 @@
 (ns neyho.eywa.dataset.postgres
   (:require
-   clojure.data
-   [clojure.java.io :as io]
-   clojure.set
-   clojure.string
-   [clojure.tools.logging :as log]
-   [next.jdbc :as jdbc]
+    clojure.data
+    [clojure.java.io :as io]
+    clojure.set
+    clojure.string
+    [clojure.tools.logging :as log]
+    [next.jdbc :as jdbc]
    ; [clojure.pprint :refer [pprint]]
-   next.jdbc.date-time
-   [neyho.eywa.data :refer [*EYWA*]]
-   [neyho.eywa.dataset :as dataset]
-   [neyho.eywa.dataset.core :as core]
-   [neyho.eywa.dataset.lacinia
-    :refer [normalized-enum-value]]
-   [neyho.eywa.dataset.postgres.query :as query]
-   [neyho.eywa.dataset.sql.naming
-    :refer [normalize-name
-            column-name
-            relation->table-name
-            entity->relation-field
-            entity->table-name]]
-   [neyho.eywa.dataset.uuids :as du]
-   [neyho.eywa.db
-    :refer [*db*
-            sync-entity
-            delete-entity]]
-   [neyho.eywa.db.postgres :as postgres]
-   [neyho.eywa.db.postgres.next :as n
-    :refer [execute! execute-one!]]
-   [neyho.eywa.iam :as iam]
-   [neyho.eywa.iam.access.context :refer [*user*]]
-   [neyho.eywa.iam.util
-    :refer [import-role
-            import-api
-            import-app]]
-   [neyho.eywa.iam.uuids :as iu]
-   [neyho.eywa.lacinia :as lacinia]
-   [neyho.eywa.transit
-    :refer [<-transit ->transit]]))
+    next.jdbc.date-time
+    [neyho.eywa.data :refer [*EYWA*]]
+    [neyho.eywa.dataset :as dataset]
+    [neyho.eywa.dataset.core :as core]
+    [neyho.eywa.dataset.lacinia
+     :refer [normalized-enum-value]]
+    [neyho.eywa.dataset.postgres.query :as query]
+    [neyho.eywa.dataset.sql.naming
+     :refer [normalize-name
+             column-name
+             relation->table-name
+             entity->relation-field
+             entity->table-name]]
+    [neyho.eywa.dataset.uuids :as du]
+    [neyho.eywa.db
+     :refer [*db*
+             sync-entity
+             delete-entity]]
+    [neyho.eywa.db.postgres :as postgres]
+    [neyho.eywa.db.postgres.next :as n
+     :refer [execute! execute-one!]]
+    [neyho.eywa.iam :as iam]
+    [neyho.eywa.iam.access.context :refer [*user*]]
+    [neyho.eywa.iam.util
+     :refer [import-role
+             import-api
+             import-app]]
+    [neyho.eywa.iam.uuids :as iu]
+    [neyho.eywa.lacinia :as lacinia]
+    [neyho.eywa.transit
+     :refer [<-transit ->transit]]))
 
 ;; TODO - remove this... probably not necessary
 (defonce ^:dynamic *model* nil)
@@ -82,29 +82,29 @@
 
       (:error validation)
       (throw
-       (ex-info
-        (format "Forbidden type conversion for %s.%s: %s → %s\n%s"
-                (:name entity)
-                (:name attribute)
-                old-type
-                new-type
-                (:error validation))
-        {:type (or (:type validation) :dataset/forbidden-conversion)
-         :entity (:name entity)
-         :attribute (:name attribute)
-         :from-type old-type
-         :to-type new-type
-         :suggestion (:suggestion validation)}))
+        (ex-info
+          (format "Forbidden type conversion for %s.%s: %s → %s\n%s"
+                  (:name entity)
+                  (:name attribute)
+                  old-type
+                  new-type
+                  (:error validation))
+          {:type (or (:type validation) :dataset/forbidden-conversion)
+           :entity (:name entity)
+           :attribute (:name attribute)
+           :from-type old-type
+           :to-type new-type
+           :suggestion (:suggestion validation)}))
 
       :else
       (throw
-       (ex-info
-        (format "Unknown validation result for %s.%s: %s → %s"
-                (:name entity)
-                (:name attribute)
-                old-type
-                new-type)
-        {:validation validation})))))
+        (ex-info
+          (format "Unknown validation result for %s.%s: %s → %s"
+                  (:name entity)
+                  (:name attribute)
+                  old-type
+                  new-type)
+          {:validation validation})))))
 
 ;;; End Type Conversion Validation
 
@@ -125,11 +125,11 @@
       t)
     (catch Throwable e
       (throw (ex-info
-              (format "Failed to generate DDL for type '%s'" t)
-              {:type ::type-ddl-generation-error
-               :phase :ddl-generation
-               :attribute-type t}
-              e)))))
+               (format "Failed to generate DDL for type '%s'" t)
+               {:type ::type-ddl-generation-error
+                :phase :ddl-generation
+                :attribute-type t}
+               e)))))
 
 (defn attribute->ddl
   "Function converts attribute to DDL syntax"
@@ -142,11 +142,11 @@
       (str (column-name n) \space enum-name))
     ;;
     (clojure.string/join
-     " "
-     (remove
-      empty?
-      [(column-name n)
-       (type->ddl t)]))))
+      " "
+      (remove
+        empty?
+        [(column-name n)
+         (type->ddl t)]))))
 
 ; (defn generate-enum-type-ddl [enum-name values]
 ;   (format
@@ -162,14 +162,14 @@
 
 (defn generate-enum-type-ddl [enum-name values]
   (format
-   "create type \"%s\" as enum%s;"
-   enum-name
-   (when (not-empty values)
-     (str " ("
-          (clojure.string/join
-           ", "
-           (map (comp #(str \' % \') normalized-enum-value :name) values))
-          \)))))
+    "create type \"%s\" as enum%s;"
+    enum-name
+    (when (not-empty values)
+      (str " ("
+           (clojure.string/join
+             ", "
+             (map (comp #(str \' % \') normalized-enum-value :name) values))
+           \)))))
 
 (defn generate-entity-attribute-enum-ddl
   [table {n :name
@@ -184,21 +184,21 @@
     :as entity}]
   (let [table (entity->table-name entity)]
     (clojure.string/join
-     ";"
-     (keep (partial generate-entity-attribute-enum-ddl table) as))))
+      ";"
+      (keep (partial generate-entity-attribute-enum-ddl table) as))))
 
 (defn drop-entity-enums-ddl
   [{as :attributes
     :as entity}]
   (let [table (entity->table-name entity)]
     (clojure.string/join
-     ";"
-     (keep
-      (fn [{n :name
-            t :type}]
-        (when (= t "enum")
-          (str "drop type if exists " (normalize-name (str table \space n)))))
-      as))))
+      ";"
+      (keep
+        (fn [{n :name
+              t :type}]
+          (when (= t "enum")
+            (str "drop type if exists " (normalize-name (str table \space n)))))
+        as))))
 
 (defn generate-entity-ddl
   "For given model and entity returns entity table DDL"
@@ -212,38 +212,38 @@
           pk ["_eid bigserial not null primary key"
               "euuid uuid not null unique default uuid_generate_v1()"]
           cs' (keep-indexed
-               (fn [idx ids]
-                 (when (not-empty ids)
-                   (format
-                    "constraint \"%s\" unique(%s)"
-                    (str table "_eucg_" idx)
-                    (clojure.string/join
-                     ","
-                     (map
-                      (fn [id]
-                        (log/infof "Generating constraint %s %s" n id)
-                        (->
-                         (core/get-attribute entity id)
-                         :name
-                         column-name))
-                      ids)))))
-               (:unique cs))
+                (fn [idx ids]
+                  (when (not-empty ids)
+                    (format
+                      "constraint \"%s\" unique(%s)"
+                      (str table "_eucg_" idx)
+                      (clojure.string/join
+                        ","
+                        (map
+                          (fn [id]
+                            (log/infof "Generating constraint %s %s" n id)
+                            (->
+                              (core/get-attribute entity id)
+                              :name
+                              column-name))
+                          ids)))))
+                (:unique cs))
           rows (concat pk as' cs')]
       (format
-       "create table \"%s\" (\n  %s\n)"
-       table
-       (clojure.string/join ",\n  " rows)))
+        "create table \"%s\" (\n  %s\n)"
+        table
+        (clojure.string/join ",\n  " rows)))
     (catch Throwable e
       (throw (ex-info
-              (format "Failed to generate CREATE TABLE DDL for entity '%s'" n)
-              {:type ::entity-ddl-generation-error
-               :phase :ddl-generation
-               :entity-name n
-               :entity-euuid (:euuid entity)
-               :table-name (try (entity->table-name entity) (catch Throwable _ nil))
-               :attribute-count (count as)
-               :has-constraints (some? cs)}
-              e)))))
+               (format "Failed to generate CREATE TABLE DDL for entity '%s'" n)
+               {:type ::entity-ddl-generation-error
+                :phase :ddl-generation
+                :entity-name n
+                :entity-euuid (:euuid entity)
+                :table-name (try (entity->table-name entity) (catch Throwable _ nil))
+                :attribute-count (count as)
+                :has-constraints (some? cs)}
+               e)))))
 
 (defn generate-relation-ddl
   "Returns relation table DDL for given model and target relation"
@@ -257,32 +257,32 @@
           from-field (entity->relation-field f)
           to-field (entity->relation-field t)]
       (format
-       "create table %s(\n %s\n)"
-       table
+        "create table %s(\n %s\n)"
+        table
         ;; Create table
-       (if (= f t)
-         (clojure.string/join
-          ",\n "
-          [(str to-field " bigint not null references \"" to-table "\"(_eid) on delete cascade")
-           (str "unique(" to-field ")")])
-         (clojure.string/join
-          ",\n "
-          [(str from-field " bigint not null references \"" from-table "\"(_eid) on delete cascade")
-           (str to-field " bigint not null references \"" to-table "\"(_eid) on delete cascade")
-           (str "unique(" from-field "," to-field ")")]))))
+        (if (= f t)
+          (clojure.string/join
+            ",\n "
+            [(str to-field " bigint not null references \"" to-table "\"(_eid) on delete cascade")
+             (str "unique(" to-field ")")])
+          (clojure.string/join
+            ",\n "
+            [(str from-field " bigint not null references \"" from-table "\"(_eid) on delete cascade")
+             (str to-field " bigint not null references \"" to-table "\"(_eid) on delete cascade")
+             (str "unique(" from-field "," to-field ")")]))))
     (catch Throwable e
       (throw (ex-info
-              (format "Failed to generate CREATE TABLE DDL for relation between '%s' and '%s'"
-                      (:name f) (:name t))
-              {:type ::relation-ddl-generation-error
-               :phase :ddl-generation
-               :from-entity (:name f)
-               :from-entity-euuid (:euuid f)
-               :to-entity (:name t)
-               :to-entity-euuid (:euuid t)
-               :relation-euuid (:euuid relation)
-               :is-recursive (= f t)}
-              e)))))
+               (format "Failed to generate CREATE TABLE DDL for relation between '%s' and '%s'"
+                       (:name f) (:name t))
+               {:type ::relation-ddl-generation-error
+                :phase :ddl-generation
+                :from-entity (:name f)
+                :from-entity-euuid (:euuid f)
+                :to-entity (:name t)
+                :to-entity-euuid (:euuid t)
+                :relation-euuid (:euuid relation)
+                :is-recursive (= f t)}
+               e)))))
 
 (defn generate-relation-indexes-ddl
   "Returns relation table DDL for given model and target relation"
@@ -299,34 +299,34 @@
   [projection]
   (let [new-entities
         (filter
-         core/added?
-         (core/get-entities projection))
+          core/added?
+          (core/get-entities projection))
         ;;
         ;; NEW: Detect reactivated entities (exist but were inactive)
         reactivated-entities
         (filter
-         (fn [entity]
-           (and (not (core/added? entity))
-                (false? (:active (core/suppress entity))) ; Was inactive
-                (true? (:active entity)))) ; Now active
-         (core/get-entities projection))
+          (fn [entity]
+            (and (not (core/added? entity))
+                 (false? (:active (core/suppress entity))) ; Was inactive
+                 (true? (:active entity)))) ; Now active
+          (core/get-entities projection))
         ;;
         changed-enties
         (filter
-         core/diff?
-         (core/get-entities projection))
+          core/diff?
+          (core/get-entities projection))
         ;;
         new-relations
         (filter
-         (fn [relation]
-           (core/added? relation))
-         (core/get-relations projection))
+          (fn [relation]
+            (core/added? relation))
+          (core/get-relations projection))
         ;;
         changed-relations
         (filter
-         (fn [relation]
-           (core/diff? relation))
-         (core/get-relations projection))
+          (fn [relation]
+            (core/diff? relation))
+          (core/get-relations projection))
         ;;
         {nrr true
          nr false} (group-by core/recursive-relation? new-relations)
@@ -370,8 +370,8 @@
                (= "mandatory" constraint) (str " not null"))]))
       ;;
       (when (or
-             (:name (core/diff entity)) ;; If entity name has changed check if there are some enums
-             (not-empty (dissoc diff :pk))) ;; If any other change happend follow steps
+              (:name (core/diff entity)) ;; If entity name has changed check if there are some enums
+              (not-empty (dissoc diff :pk))) ;; If any other change happend follow steps
         (let [{dn :name
                dt :type
                dconfig :configuration} diff
@@ -383,11 +383,11 @@
             ;; Change attribute name
             (and dn (not= (column-name dn) (column-name name)))
             (conj
-             (do
-               (log/debugf "Renaming table %s column %s -> %s" old-table column (column-name name))
-               (format
-                "alter table \"%s\" rename column %s to %s"
-                old-table column (column-name name))))
+              (do
+                (log/debugf "Renaming table %s column %s -> %s" old-table column (column-name name))
+                (format
+                  "alter table \"%s\" rename column %s to %s"
+                  old-table column (column-name name))))
             ;; If attribute type has changed to enum
             ;; than create new enum type with defined values
             (and (= type "enum") (some? dt))
@@ -399,9 +399,9 @@
                  (#{"avatar"} dt)
                  (#{"json"} type))
             (conj
-             (do
-               (log/debugf "Setting all avatar values to NULL")
-               (format "update \"%s\" set %s = NULL" old-table column)))
+              (do
+                (log/debugf "Setting all avatar values to NULL")
+                (format "update \"%s\" set %s = NULL" old-table column)))
             ;; Type has changed so you better cast to target type
             dt
             (as-> statements
@@ -414,35 +414,35 @@
                                       "group" (group-table)
                                       "role" (role-table))]
                   (conj
-                   (vec statements)
-                   (format "alter table \"%s\" drop constraint %s" old-table constraint-name)
-                   (format
-                    "alter table \"%s\" add constraint \"%s\" foreign key (%s) references \"%s\"(_eid) on delete set null"
-                    old-table constraint-name attribute-name refered-table)))
+                    (vec statements)
+                    (format "alter table \"%s\" drop constraint %s" old-table constraint-name)
+                    (format
+                      "alter table \"%s\" add constraint \"%s\" foreign key (%s) references \"%s\"(_eid) on delete set null"
+                      old-table constraint-name attribute-name refered-table)))
                 ;; Proceed with acceptable type alter
                 (conj
-                 statements
-                 (cond->
-                  (format
-                   "alter table \"%s\" alter column %s type %s"
-                   old-table column
-                   (case type
-                     "enum" new-enum-name
-                     (type->ddl type)))
-                   (= "int" type) (str " using(trim(" column ")::integer)")
-                   (= "float" type) (str " using(trim(" column ")::float)")
-                   (= "string" type) (str " using(" column "::text)")
+                  statements
+                  (cond->
+                    (format
+                      "alter table \"%s\" alter column %s type %s"
+                      old-table column
+                      (case type
+                        "enum" new-enum-name
+                        (type->ddl type)))
+                    (= "int" type) (str " using(trim(" column ")::integer)")
+                    (= "float" type) (str " using(trim(" column ")::float)")
+                    (= "string" type) (str " using(" column "::text)")
                     ; (= "json" type) (str " using(" column "::jsonb)")
-                   (= "json" type) (str " using\n case when "
-                                        column " ~ '^\\s*\\{.*\\}\\s*$' OR "
-                                        column " ~ '^\\s*\\[.*\\]\\s*$'\nthen " column
-                                        "::jsonb\nelse NULL end;")
-                   (= "transit" type) (str " using(" column "::text)")
-                   (= "avatar" type) (str " using(" column "::text)")
-                   (= "encrypted" type) (str " using(" column "::text)")
-                   (= "hashed" type) (str " using(" column "::text)")
-                   (= "boolean" type) (str " using(trim(" column ")::boolean)")
-                   (= "enum" type) (str " using(" column ")::" old-enum-name)))))
+                    (= "json" type) (str " using\n case when "
+                                         column " ~ '^\\s*\\{.*\\}\\s*$' OR "
+                                         column " ~ '^\\s*\\[.*\\]\\s*$'\nthen " column
+                                         "::jsonb\nelse NULL end;")
+                    (= "transit" type) (str " using(" column "::text)")
+                    (= "avatar" type) (str " using(" column "::text)")
+                    (= "encrypted" type) (str " using(" column "::text)")
+                    (= "hashed" type) (str " using(" column "::text)")
+                    (= "boolean" type) (str " using(trim(" column ")::boolean)")
+                    (= "enum" type) (str " using(" column ")::" old-enum-name)))))
             ;; If attribute was previously enum and now it is not enum
             ;; than delete enum type
             (= dt "enum")
@@ -456,25 +456,30 @@
             (and (= type "enum") (nil? dt))
             (as-> statements
                   (let [[ov nv] (clojure.data/diff
-                                 (reduce
-                                  (fn [r [idx {n :name
-                                               e :euuid}]]
-                                    (if (not-empty n)
-                                      (assoc r (or e (get-in values [idx :euuid])) n)
-                                      r))
-                                  nil
-                                  (map-indexed (fn [idx v] (vector idx v)) (:values dconfig)))
-                                 (zipmap
-                                  (map :euuid values)
-                                  (map :name values)))
+                                  (reduce
+                                    (fn [r [idx {n :name
+                                                 e :euuid}]]
+                                      (if (not-empty n)
+                                        (assoc r (or e (get-in values [idx :euuid])) n)
+                                        r))
+                                    nil
+                                    (map-indexed (fn [idx v] (vector idx v)) (:values dconfig)))
+                                  (zipmap
+                                    (map :euuid values)
+                                    (map :name values)))
                         column (column-name name)]
                 ; alter type my_enum rename to my_enum__;
                 ; -- create the new enum
                 ; create type my_enum as enum ('value1', 'value2', 'value3');
 
-                ; -- alter all you enum columns
-                ; alter table my_table
-                ; alter column my_column type my_enum using my_column::text::my_enum;
+                ; -- convert column to text
+                ; alter table my_table alter column my_column type text using my_column::text;
+
+                ; -- update values with CASE statement
+                ; update my_table set my_column = case ...;
+
+                ; -- convert to new enum
+                ; alter table my_table alter column my_column type my_enum using my_column::my_enum;
 
                 ; -- drop the old enum
                 ; drop type my_enum__;
@@ -482,9 +487,13 @@
                     (log/tracef "Old enums: %s" ov)
                     (log/tracef "New enums: %s" nv)
                     (conj
-                     statements
-                     (format "alter type %s rename to %s__" new-enum-name new-enum-name)
-                     (format "create type %s as enum (%s)" new-enum-name (clojure.string/join "," (map #(str \' % \') (remove empty? (concat (map :name values) (vals ov))))))
+                      statements
+                      (format "alter type %s rename to %s__" new-enum-name new-enum-name)
+                      (format "create type %s as enum (%s)" new-enum-name (clojure.string/join "," (map #(str \' % \') (remove empty? (concat (map :name values) (vals ov))))))
+                      ;; CRITICAL FIX: Convert to text BEFORE updating values
+                      ;; This allows us to set any text value without enum constraints
+                      (format "alter table \"%s\" alter column %s type text using %s::%s__::text"
+                              old-table column column new-enum-name)
                   ;; UPDATE your_table SET new_column =
                   ;;    CASE your_column
                   ;;        WHEN 'active' THEN 'active'
@@ -492,24 +501,24 @@
                   ;;        WHEN 'pending' THEN 'pending'
                   ;;        ELSE your_column
                   ;;    END;
-                     (if (empty? ov) ""
-                         (str
-                          "update " old-table " set " column " ="
-                          "\n  case " column "\n    "
-                          (clojure.string/join
-                           "\n    "
-                           (reduce-kv
-                            (fn [r euuid old-name]
-                              (if-let [new-name (get nv euuid)]
-                                (conj r (str "     when '" old-name "' then '" new-name "'"))
-                                (conj r (str "     when '" old-name "' then '" old-name "'"))))
-                            (list (str " else " column))
-                            ov))
-                          "\n   end;"))
+                      (if (empty? ov) ""
+                          (str
+                            "update " old-table " set " column " ="
+                            "\n  case " column "\n    "
+                            (clojure.string/join
+                              "\n    "
+                              (reduce-kv
+                                (fn [r euuid old-name]
+                                  (if-let [new-name (get nv euuid)]
+                                    (conj r (str "     when '" old-name "' then '" new-name "'"))
+                                    (conj r (str "     when '" old-name "' then '" old-name "'"))))
+                                (list (str " else " column))
+                                ov))
+                            "\n   end;"))
 
-                     (format "alter table \"%s\" alter column %s type %s using %s::text::%s"
-                             old-table column new-enum-name column new-enum-name)
-                     (format "drop type %s__" new-enum-name))))))))))
+                      (format "alter table \"%s\" alter column %s type %s using %s::%s"
+                              old-table column new-enum-name column new-enum-name)
+                      (format "drop type %s__" new-enum-name))))))))))
 
 (defn orphaned-attribute->drop-ddl
   "Generates DROP COLUMN DDL for an orphaned attribute.
@@ -558,71 +567,71 @@
       ;; Renaming occured
       (:name diff)
       (into
-       (cond->
-        [(format "alter table \"%s\" rename to \"%s\"" old-table table)
-         (format "alter table \"%s\" rename constraint \"%s_pkey\" to \"%s_pkey\"" table old-table table)
-         (format "alter table \"%s\" rename constraint \"%s_euuid_key\" to \"%s_euuid_key\"" table old-table table)
-         (format "alter sequence \"%s__eid_seq\" rename to \"%s__eid_seq\"" old-table table)
+        (cond->
+          [(format "alter table \"%s\" rename to \"%s\"" old-table table)
+           (format "alter table \"%s\" rename constraint \"%s_pkey\" to \"%s_pkey\"" table old-table table)
+           (format "alter table \"%s\" rename constraint \"%s_euuid_key\" to \"%s_euuid_key\"" table old-table table)
+           (format "alter sequence \"%s__eid_seq\" rename to \"%s__eid_seq\"" old-table table)
            ;; AUDIT
-         (format "alter table \"%s\" rename constraint \"%s_%s_fkey\" to \"%s_%s_fkey\"" table old-table "modified_by" table "modified_by")]
+           (format "alter table \"%s\" rename constraint \"%s_%s_fkey\" to \"%s_%s_fkey\"" table old-table "modified_by" table "modified_by")]
           ;;
-         (some? old-constraints)
-         (into
-          (map-indexed
-           (fn [idx _]
-             (let [constraint (str "_eucg_" idx)]
-               (format
-                "alter table \"%s\" rename constraint \"%s%s\" to \"%s%s\""
-                table old-table constraint
-                table constraint)))
-           old-constraints))))
+          (some? old-constraints)
+          (into
+            (map-indexed
+              (fn [idx _]
+                (let [constraint (str "_eucg_" idx)]
+                  (format
+                    "alter table \"%s\" rename constraint \"%s%s\" to \"%s%s\""
+                    table old-table constraint
+                    table constraint)))
+              old-constraints))))
       ;; If there are some differences in constraints
       (-> diff :configuration :constraints)
       (into
         ;; concatenate constraints
-       (let [ncs (-> entity :configuration :constraints :unique)
-             ocs old-constraints
-             groups (max (count ocs) (count ncs))]
+        (let [ncs (-> entity :configuration :constraints :unique)
+              ocs old-constraints
+              groups (max (count ocs) (count ncs))]
           ;; by reducing
-         (when (pos? groups)
-           (reduce
-            (fn [statements idx]
-              (let [o (try (nth ocs idx) (catch Throwable _ nil))
-                    n (try (nth ncs idx) (catch Throwable _ nil))
-                    constraint (str "_eucg_" idx)
-                    new-constraint (format
-                                    "alter table \"%s\" add constraint %s unique(%s)"
-                                    table (str table constraint)
-                                    (clojure.string/join
-                                     ","
-                                     (map
-                                      (fn [id]
-                                        (->
-                                         (core/get-attribute entity id)
-                                         :name
-                                         column-name))
-                                      n)))
-                    drop-constraint (format
-                                     "alter table \"%s\" drop constraint %s"
-                                     table
-                                     (str table constraint))]
-                (cond->
-                 statements
+          (when (pos? groups)
+            (reduce
+              (fn [statements idx]
+                (let [o (try (nth ocs idx) (catch Throwable _ nil))
+                      n (try (nth ncs idx) (catch Throwable _ nil))
+                      constraint (str "_eucg_" idx)
+                      new-constraint (format
+                                       "alter table \"%s\" add constraint %s unique(%s)"
+                                       table (str table constraint)
+                                       (clojure.string/join
+                                         ","
+                                         (map
+                                           (fn [id]
+                                             (->
+                                               (core/get-attribute entity id)
+                                               :name
+                                               column-name))
+                                           n)))
+                      drop-constraint (format
+                                        "alter table \"%s\" drop constraint %s"
+                                        table
+                                        (str table constraint))]
+                  (cond->
+                    statements
                     ;; Add new constraint
-                  (empty? o)
-                  (conj new-constraint)
+                    (empty? o)
+                    (conj new-constraint)
                     ;; Delete old constraint group
-                  (empty? n)
-                  (conj drop-constraint)
+                    (empty? n)
+                    (conj drop-constraint)
                     ;; When constraint has changed
-                  (and
-                   (every? not-empty [o n])
-                   (not= (set o) (set n)))
-                  (conj
-                   drop-constraint
-                   new-constraint))))
-            []
-            (range groups))))))))
+                    (and
+                      (every? not-empty [o n])
+                      (not= (set o) (set n)))
+                    (conj
+                      drop-constraint
+                      new-constraint))))
+              []
+              (range groups))))))))
 
 (defn transform-relation
   [tx {:keys [from to]
@@ -643,113 +652,108 @@
       ;; When name has changed
       (when (not= old-name new-name)
         (let [sql (format
-                   "alter table %s rename to %s"
-                   old-name new-name)]
+                    "alter table %s rename to %s"
+                    old-name new-name)]
           (log/debugf "Renaming relation table %s->%s\n%s" old-name new-name sql)
           (try
             (execute-one! tx [sql])
             (catch Throwable e
               (throw (ex-info
-                      (format "Failed to rename relation table from '%s' to '%s' (relation: %s → %s)"
-                              old-name new-name (:name from) (:name to))
-                      {:type ::relation-rename-error
-                       :phase :ddl-execution
-                       :operation :rename-table
-                       :from-entity (:name from)
-                       :from-entity-euuid (:euuid from)
-                       :to-entity (:name to)
-                       :to-entity-euuid (:euuid to)
-                       :relation-euuid (:euuid relation)
-                       :old-table-name old-name
-                       :new-table-name new-name
-                       :sql sql}
-                      e))))))
+                       (format "Failed to rename relation table from '%s' to '%s' (relation: %s → %s)"
+                               old-name new-name (:name from) (:name to))
+                       {:type ::relation-rename-error
+                        :phase :ddl-execution
+                        :operation :rename-table
+                        :from-entity (:name from)
+                        :from-entity-euuid (:euuid from)
+                        :to-entity (:name to)
+                        :to-entity-euuid (:euuid to)
+                        :relation-euuid (:euuid relation)
+                        :old-table-name old-name
+                        :new-table-name new-name
+                        :sql sql}
+                       e))))))
       ;; when to name has changed than change table column
       (when (:name to-diff)
         (let [o (entity->relation-field old-to)
               n (entity->relation-field to)
               sql (format
-                   "alter table %s rename column %s to %s"
-                   new-name o n)]
+                    "alter table %s rename column %s to %s"
+                    new-name o n)]
           (log/debugf "Renaming relation table %s -> %s\n%s" old-name new-name sql)
           (try
             (execute-one! tx [sql])
             (catch Throwable e
               (throw (ex-info
-                      (format "Failed to rename 'to' column in relation table '%s' from '%s' to '%s' (relation: %s → %s)"
-                              new-name o n (:name from) (:name to))
-                      {:type ::relation-column-rename-error
-                       :phase :ddl-execution
-                       :operation :rename-to-column
-                       :from-entity (:name from)
-                       :from-entity-euuid (:euuid from)
-                       :to-entity (:name to)
-                       :to-entity-euuid (:euuid to)
-                       :relation-euuid (:euuid relation)
-                       :table-name new-name
-                       :old-column-name o
-                       :new-column-name n
-                       :sql sql}
-                      e))))))
+                       (format "Failed to rename 'to' column in relation table '%s' from '%s' to '%s' (relation: %s → %s)"
+                               new-name o n (:name from) (:name to))
+                       {:type ::relation-column-rename-error
+                        :phase :ddl-execution
+                        :operation :rename-to-column
+                        :from-entity (:name from)
+                        :from-entity-euuid (:euuid from)
+                        :to-entity (:name to)
+                        :to-entity-euuid (:euuid to)
+                        :relation-euuid (:euuid relation)
+                        :table-name new-name
+                        :old-column-name o
+                        :new-column-name n
+                        :sql sql}
+                       e))))))
       ;; when from name has changed than change table column
       (when (:name from-diff)
         (let [o (entity->relation-field old-from)
               n (entity->relation-field from)
               sql (format
-                   "alter table %s rename column %s to %s"
-                   new-name o n)]
+                    "alter table %s rename column %s to %s"
+                    new-name o n)]
           (log/debugf "Renaming relation %s -> %s\n%s" old-name new-name sql)
           (try
             (execute-one! tx [sql])
             (catch Throwable e
               (throw (ex-info
-                      (format "Failed to rename 'from' column in relation table '%s' from '%s' to '%s' (relation: %s → %s)"
-                              new-name o n (:name from) (:name to))
-                      {:type ::relation-column-rename-error
-                       :phase :ddl-execution
-                       :operation :rename-from-column
-                       :from-entity (:name from)
-                       :from-entity-euuid (:euuid from)
-                       :to-entity (:name to)
-                       :to-entity-euuid (:euuid to)
-                       :relation-euuid (:euuid relation)
-                       :table-name new-name
-                       :old-column-name o
-                       :new-column-name n
-                       :sql sql}
-                      e)))))))
+                       (format "Failed to rename 'from' column in relation table '%s' from '%s' to '%s' (relation: %s → %s)"
+                               new-name o n (:name from) (:name to))
+                       {:type ::relation-column-rename-error
+                        :phase :ddl-execution
+                        :operation :rename-from-column
+                        :from-entity (:name from)
+                        :from-entity-euuid (:euuid from)
+                        :to-entity (:name to)
+                        :to-entity-euuid (:euuid to)
+                        :relation-euuid (:euuid relation)
+                        :table-name new-name
+                        :old-column-name o
+                        :new-column-name n
+                        :sql sql}
+                       e)))))))
     (catch clojure.lang.ExceptionInfo e
       ;; Re-throw ex-info with preserved context
       (throw e))
     (catch Throwable e
       ;; Catch any other errors during relation transformation
       (throw (ex-info
-              (format "Failed to transform relation: %s → %s"
-                      (:name from) (:name to))
-              {:type ::relation-transformation-error
-               :phase :ddl-execution
-               :from-entity (:name from)
-               :from-entity-euuid (:euuid from)
-               :to-entity (:name to)
-               :to-entity-euuid (:euuid to)
-               :relation-euuid (:euuid relation)}
-              e)))))
+               (format "Failed to transform relation: %s → %s"
+                       (:name from) (:name to))
+               {:type ::relation-transformation-error
+                :phase :ddl-execution
+                :from-entity (:name from)
+                :from-entity-euuid (:euuid from)
+                :to-entity (:name to)
+                :to-entity-euuid (:euuid to)
+                :relation-euuid (:euuid relation)}
+               e)))))
 
 (defn column-exists?
   [tx table column]
   (let [sql (str
-             "select exists ("
-             "select 1 from pg_attribute where attrelid = '" table "'::regclass"
-             " and attname = '" column "'"
-             " and attnum > 0"
-             " and not attisdropped"
-             ");")]
+              "select exists ("
+              "select 1 from pg_attribute where attrelid = '" table "'::regclass"
+              " and attname = '" column "'"
+              " and attnum > 0"
+              " and not attisdropped"
+              ");")]
     (:exists (execute-one! tx [sql]))))
-
-(comment
-  (do (def tx nil) (def table "ict_category") (def column "parent"))
-  (with-open [con (jdbc/get-connection (:datasource *db*))]
-    (column-exists? con "ict_category" "parent")))
 
 ;; 1. Generate new entities by creating tables
 ;;  - Create new types if needed by enum attributes
@@ -770,14 +774,14 @@
          crr :changed/recursive-relations} (analyze-projection projection)
         {amt :who/table} configuration]
     (log/tracef
-     "Transform projection analysis\nNew\n%s\nReactivated\n%s\nChanged\n%s"
-     {:new/entities (map :name ne)
-      :new/relations (map (juxt :from-label :to-label) nr)
-      :new/recursive (map (juxt :from-label :to-label) nrr)}
-     {:reactivated/entities (map :name re)} ; NEW
-     {:changed/entities (map :name ce)
-      :changed/relations (map (juxt :from-label :to-label) cr)
-      :changed/recursive (map (juxt :from-label :to-label) crr)})
+      "Transform projection analysis\nNew\n%s\nReactivated\n%s\nChanged\n%s"
+      {:new/entities (map :name ne)
+       :new/relations (map (juxt :from-label :to-label) nr)
+       :new/recursive (map (juxt :from-label :to-label) nrr)}
+      {:reactivated/entities (map :name re)} ; NEW
+      {:changed/entities (map :name ce)
+       :changed/relations (map (juxt :from-label :to-label) cr)
+       :changed/recursive (map (juxt :from-label :to-label) crr)})
     (jdbc/with-transaction [tx ds]
       ;; Handle reactivated entities (table exists, just mark active)
       (when (not-empty re)
@@ -787,13 +791,13 @@
       ;; Generate new entities
       (let [entity-priority {iu/user -100}
             ne (sort-by
-                (fn [{:keys [euuid]}]
-                  (get entity-priority euuid 0))
-                ne)]
+                 (fn [{:keys [euuid]}]
+                   (get entity-priority euuid 0))
+                 ne)]
         (when (not-empty ne)
           (log/infof
-           "Generating new entities... %s"
-           (clojure.string/join ", " (map :name ne))))
+            "Generating new entities... %s"
+            (clojure.string/join ", " (map :name ne))))
         (doseq [{n :name
                  :as entity} ne
                 :let [table-sql (generate-entity-ddl entity)
@@ -806,76 +810,76 @@
                 (execute! tx [enum-sql])
                 (catch Throwable e
                   (throw (ex-info
-                          (format "Failed to create enum types for entity '%s'" n)
-                          {:type ::entity-enum-creation-error
-                           :phase :ddl-execution
-                           :operation :create-enum-types
-                           :entity-name n
-                           :entity-euuid (:euuid entity)
-                           :table-name table
-                           :sql enum-sql}
-                          e)))))
+                           (format "Failed to create enum types for entity '%s'" n)
+                           {:type ::entity-enum-creation-error
+                            :phase :ddl-execution
+                            :operation :create-enum-types
+                            :entity-name n
+                            :entity-euuid (:euuid entity)
+                            :table-name table
+                            :sql enum-sql}
+                           e)))))
             (log/debugf "Adding entity %s to DB\n%s" n table-sql)
             (try
               (execute-one! tx [table-sql])
               (catch Throwable e
                 (throw (ex-info
-                        (format "Failed to create table for entity '%s'" n)
-                        {:type ::entity-table-creation-error
-                         :phase :ddl-execution
-                         :operation :create-table
-                         :entity-name n
-                         :entity-euuid (:euuid entity)
-                         :table-name table
-                         :sql table-sql}
-                        e))))
+                         (format "Failed to create table for entity '%s'" n)
+                         {:type ::entity-table-creation-error
+                          :phase :ddl-execution
+                          :operation :create-table
+                          :entity-name n
+                          :entity-euuid (:euuid entity)
+                          :table-name table
+                          :sql table-sql}
+                         e))))
             (let [sql (format
-                       "alter table \"%s\" add column \"%s\" bigint references \"%s\"(_eid) on delete set null"
-                       table "modified_by" amt)]
+                        "alter table \"%s\" add column \"%s\" bigint references \"%s\"(_eid) on delete set null"
+                        table "modified_by" amt)]
               (log/tracef "Adding table audit reference[who] column\n%s" sql)
               (try
                 (execute-one! tx [sql])
                 (catch Throwable e
                   (throw (ex-info
-                          (format "Failed to add audit 'modified_by' column to entity '%s'" n)
-                          {:type ::entity-audit-column-error
-                           :phase :ddl-execution
-                           :operation :add-audit-who-column
-                           :entity-name n
-                           :entity-euuid (:euuid entity)
-                           :table-name table
-                           :sql sql}
-                          e)))))
+                           (format "Failed to add audit 'modified_by' column to entity '%s'" n)
+                           {:type ::entity-audit-column-error
+                            :phase :ddl-execution
+                            :operation :add-audit-who-column
+                            :entity-name n
+                            :entity-euuid (:euuid entity)
+                            :table-name table
+                            :sql sql}
+                           e)))))
             (let [sql (format
-                       "alter table \"%s\" add column \"%s\" timestamp not null default localtimestamp"
-                       table "modified_on")]
+                        "alter table \"%s\" add column \"%s\" timestamp not null default localtimestamp"
+                        table "modified_on")]
               (log/tracef "Adding table audit reference[when] column\n%s" sql)
               (try
                 (execute-one! tx [sql])
                 (catch Throwable e
                   (throw (ex-info
-                          (format "Failed to add audit 'modified_on' column to entity '%s'" n)
-                          {:type ::entity-audit-column-error
-                           :phase :ddl-execution
-                           :operation :add-audit-when-column
-                           :entity-name n
-                           :entity-euuid (:euuid entity)
-                           :table-name table
-                           :sql sql}
-                          e)))))
+                           (format "Failed to add audit 'modified_on' column to entity '%s'" n)
+                           {:type ::entity-audit-column-error
+                            :phase :ddl-execution
+                            :operation :add-audit-when-column
+                            :entity-name n
+                            :entity-euuid (:euuid entity)
+                            :table-name table
+                            :sql sql}
+                           e)))))
             (catch clojure.lang.ExceptionInfo e
               ;; Re-throw ex-info with preserved context
               (throw e))
             (catch Throwable e
               ;; Catch any other unexpected errors during entity creation
               (throw (ex-info
-                      (format "Unexpected error while creating entity '%s'" n)
-                      {:type ::entity-creation-error
-                       :phase :ddl-execution
-                       :entity-name n
-                       :entity-euuid (:euuid entity)
-                       :table-name table}
-                      e))))))
+                       (format "Unexpected error while creating entity '%s'" n)
+                       {:type ::entity-creation-error
+                        :phase :ddl-execution
+                        :entity-name n
+                        :entity-euuid (:euuid entity)
+                        :table-name table}
+                       e))))))
       ;; Change entities
       (when (not-empty ce) (log/info "Checking changed entities..."))
       (doseq [{n :name
@@ -888,15 +892,15 @@
             (execute-one! tx [statement])
             (catch Throwable e
               (throw (ex-info
-                      (format "Failed to execute DDL statement for entity '%s'" n)
-                      {:type ::entity-change-error
-                       :phase :ddl-execution
-                       :operation :alter-entity
-                       :entity-name n
-                       :entity-euuid (:euuid entity)
-                       :table-name (entity->table-name entity)
-                       :sql statement}
-                      e))))))
+                       (format "Failed to execute DDL statement for entity '%s'" n)
+                       {:type ::entity-change-error
+                        :phase :ddl-execution
+                        :operation :alter-entity
+                        :entity-name n
+                        :entity-euuid (:euuid entity)
+                        :table-name (entity->table-name entity)
+                        :sql statement}
+                       e))))))
       ;; Change relations
       (when (not-empty cr)
         (log/info "Checking changed trans entity relations..."))
@@ -915,60 +919,60 @@
                                       (column-name label))]]
         (when-not (and (some? tl) (not-empty tl))
           (throw
-           (ex-info
-            (str "Can't change recursive relation for entity " tname " that has empty label")
-            {:entity e
-             :relation {:euuid euuid
-                        :label (:to-label diff)}
-             :type ::core/error-recursive-no-label})))
+            (ex-info
+              (str "Can't change recursive relation for entity " tname " that has empty label")
+              {:entity e
+               :relation {:euuid euuid
+                          :label (:to-label diff)}
+               :type ::core/error-recursive-no-label})))
         (if (empty? previous-column)
           (do
             (log/debugf
-             "Previous deploy didn't have to label for recursive relation %s at entity %s"
-             euuid tname)
+              "Previous deploy didn't have to label for recursive relation %s at entity %s"
+              euuid tname)
             (when tl
               (when-not (column-exists? tx table tl)
                 (let [sql (format
-                           "alter table %s add %s bigint references \"%s\"(_eid) on delete cascade"
-                           table tl table)]
+                            "alter table %s add %s bigint references \"%s\"(_eid) on delete cascade"
+                            table tl table)]
                   (log/debug "Creating recursive relation for entity %s\n%s" tname sql)
                   (try
                     (execute-one! tx [sql])
                     (catch Throwable ex
                       (throw (ex-info
-                              (format "Failed to create recursive relation column for entity '%s'" tname)
-                              {:type ::recursive-relation-creation-error
-                               :phase :ddl-execution
-                               :operation :add-recursive-column
-                               :entity-name tname
-                               :entity-euuid (:euuid e)
-                               :relation-euuid euuid
-                               :table-name table
-                               :column-name tl
-                               :sql sql}
-                              ex))))))))
+                               (format "Failed to create recursive relation column for entity '%s'" tname)
+                               {:type ::recursive-relation-creation-error
+                                :phase :ddl-execution
+                                :operation :add-recursive-column
+                                :entity-name tname
+                                :entity-euuid (:euuid e)
+                                :relation-euuid euuid
+                                :table-name table
+                                :column-name tl
+                                :sql sql}
+                               ex))))))))
           ;; Apply changes
           (when diff
             (let [sql (format
-                       "alter table %s rename column %s to %s"
-                       table previous-column (column-name tl))]
+                        "alter table %s rename column %s to %s"
+                        table previous-column (column-name tl))]
               (log/debugf "Updating recursive relation for entity %s\n%s" tname sql)
               (try
                 (execute-one! tx [sql])
                 (catch Throwable ex
                   (throw (ex-info
-                          (format "Failed to rename recursive relation column for entity '%s'" tname)
-                          {:type ::recursive-relation-rename-error
-                           :phase :ddl-execution
-                           :operation :rename-recursive-column
-                           :entity-name tname
-                           :entity-euuid (:euuid e)
-                           :relation-euuid euuid
-                           :table-name table
-                           :old-column-name previous-column
-                           :new-column-name (column-name tl)
-                           :sql sql}
-                          ex))))))))
+                           (format "Failed to rename recursive relation column for entity '%s'" tname)
+                           {:type ::recursive-relation-rename-error
+                            :phase :ddl-execution
+                            :operation :rename-recursive-column
+                            :entity-name tname
+                            :entity-euuid (:euuid e)
+                            :relation-euuid euuid
+                            :table-name table
+                            :old-column-name previous-column
+                            :new-column-name (column-name tl)
+                            :sql sql}
+                           ex))))))))
       ;; Generate new relations
       (when (not-empty nr) (log/info "Generating new relations..."))
       (doseq [{{tname :name
@@ -984,69 +988,69 @@
             (execute-one! tx [sql])
             (catch Throwable e
               (throw (ex-info
-                      (format "Failed to create relation table between '%s' and '%s'" fname tname)
-                      {:type ::relation-creation-error
-                       :phase :ddl-execution
-                       :operation :create-relation-table
-                       :from-entity fname
-                       :from-entity-euuid (:euuid from-entity)
-                       :to-entity tname
-                       :to-entity-euuid (:euuid to-entity)
-                       :relation-euuid (:euuid relation)
-                       :table-name (relation->table-name relation)
-                       :sql sql}
-                      e))))
+                       (format "Failed to create relation table between '%s' and '%s'" fname tname)
+                       {:type ::relation-creation-error
+                        :phase :ddl-execution
+                        :operation :create-relation-table
+                        :from-entity fname
+                        :from-entity-euuid (:euuid from-entity)
+                        :to-entity tname
+                        :to-entity-euuid (:euuid to-entity)
+                        :relation-euuid (:euuid relation)
+                        :table-name (relation->table-name relation)
+                        :sql sql}
+                       e))))
           (when from-idx
             (log/debugf "Creating from indexes for relation: %s <-> %s\n%s" fname tname from-idx)
             (try
               (execute-one! tx [from-idx])
               (catch Throwable e
                 (throw (ex-info
-                        (format "Failed to create 'from' index for relation between '%s' and '%s'" fname tname)
-                        {:type ::relation-index-creation-error
-                         :phase :ddl-execution
-                         :operation :create-from-index
-                         :from-entity fname
-                         :from-entity-euuid (:euuid from-entity)
-                         :to-entity tname
-                         :to-entity-euuid (:euuid to-entity)
-                         :relation-euuid (:euuid relation)
-                         :table-name (relation->table-name relation)
-                         :sql from-idx}
-                        e)))))
+                         (format "Failed to create 'from' index for relation between '%s' and '%s'" fname tname)
+                         {:type ::relation-index-creation-error
+                          :phase :ddl-execution
+                          :operation :create-from-index
+                          :from-entity fname
+                          :from-entity-euuid (:euuid from-entity)
+                          :to-entity tname
+                          :to-entity-euuid (:euuid to-entity)
+                          :relation-euuid (:euuid relation)
+                          :table-name (relation->table-name relation)
+                          :sql from-idx}
+                         e)))))
           (when to-idx
             (log/debugf "Creating to indexes for relation: %s <-> %s\n%s" fname tname to-idx)
             (try
               (execute-one! tx [to-idx])
               (catch Throwable e
                 (throw (ex-info
-                        (format "Failed to create 'to' index for relation between '%s' and '%s'" fname tname)
-                        {:type ::relation-index-creation-error
-                         :phase :ddl-execution
-                         :operation :create-to-index
-                         :from-entity fname
-                         :from-entity-euuid (:euuid from-entity)
-                         :to-entity tname
-                         :to-entity-euuid (:euuid to-entity)
-                         :relation-euuid (:euuid relation)
-                         :table-name (relation->table-name relation)
-                         :sql to-idx}
-                        e)))))
+                         (format "Failed to create 'to' index for relation between '%s' and '%s'" fname tname)
+                         {:type ::relation-index-creation-error
+                          :phase :ddl-execution
+                          :operation :create-to-index
+                          :from-entity fname
+                          :from-entity-euuid (:euuid from-entity)
+                          :to-entity tname
+                          :to-entity-euuid (:euuid to-entity)
+                          :relation-euuid (:euuid relation)
+                          :table-name (relation->table-name relation)
+                          :sql to-idx}
+                         e)))))
           (catch clojure.lang.ExceptionInfo e
             ;; Re-throw ex-info with preserved context
             (throw e))
           (catch Throwable e
             ;; Catch any other unexpected errors during relation creation
             (throw (ex-info
-                    (format "Unexpected error while creating relation between '%s' and '%s'" fname tname)
-                    {:type ::relation-creation-error
-                     :phase :ddl-execution
-                     :from-entity fname
-                     :from-entity-euuid (:euuid from-entity)
-                     :to-entity tname
-                     :to-entity-euuid (:euuid to-entity)
-                     :relation-euuid (:euuid relation)}
-                    e)))))
+                     (format "Unexpected error while creating relation between '%s' and '%s'" fname tname)
+                     {:type ::relation-creation-error
+                      :phase :ddl-execution
+                      :from-entity fname
+                      :from-entity-euuid (:euuid from-entity)
+                      :to-entity tname
+                      :to-entity-euuid (:euuid to-entity)
+                      :relation-euuid (:euuid relation)}
+                     e)))))
       ;; Add new recursive relations
       (when (not-empty nrr)
         (log/info "Adding new recursive relations..."))
@@ -1057,191 +1061,204 @@
               :when (not-empty tl)
               :let [table (entity->table-name e)
                     sql (format
-                         "alter table %s add %s bigint references \"%s\"(_eid) on delete cascade"
-                         table (column-name tl) table)]]
+                          "alter table %s add %s bigint references \"%s\"(_eid) on delete cascade"
+                          table (column-name tl) table)]]
         (log/debug "Creating recursive relation for entity %s\n%s" tname sql)
         (try
           (execute-one! tx [sql])
           (catch Throwable ex
             (throw (ex-info
-                    (format "Failed to add new recursive relation column for entity '%s'" tname)
-                    {:type ::recursive-relation-creation-error
-                     :phase :ddl-execution
-                     :operation :add-new-recursive-column
-                     :entity-name tname
-                     :entity-euuid (:euuid e)
-                     :relation-euuid rel-euuid
-                     :table-name table
-                     :column-name (column-name tl)
-                     :sql sql}
-                    ex))))))))
+                     (format "Failed to add new recursive relation column for entity '%s'" tname)
+                     {:type ::recursive-relation-creation-error
+                      :phase :ddl-execution
+                      :operation :add-new-recursive-column
+                      :entity-name tname
+                      :entity-euuid (:euuid e)
+                      :relation-euuid rel-euuid
+                      :table-name table
+                      :column-name (column-name tl)
+                      :sql sql}
+                     ex))))))))
 
 (defn model->schema [model]
   (binding [*model* model]
     (reduce
-     (fn [schema {:keys [euuid]
-                  ename :name
-                  :as entity}]
-       (log/tracef "Building schema for entity %s[%s]" ename euuid)
-       (let [table (entity->table-name entity)
-             fields (reduce
-                     (fn [fields {euuid :euuid
-                                  aname :name
-                                  t :type
-                                  constraint :constraint}]
-                       (log/tracef "Adding field %s in entity %s to schema" aname ename)
-                       (let [f {:key (keyword (normalize-name aname))
-                                :euuid euuid
-                                :type t
-                                :constraint constraint}]
-                         (assoc fields euuid
-                                (case t
-                                  "enum"
-                                  (assoc f :postgres/type (normalize-name (str table \space aname)))
+      (fn [schema {:keys [euuid]
+                   ename :name
+                   :as entity}]
+        (log/tracef "Building schema for entity %s[%s]" ename euuid)
+        (let [table (entity->table-name entity)
+              fields (reduce
+                       (fn [fields {euuid :euuid
+                                    aname :name
+                                    t :type
+                                    constraint :constraint}]
+                         (log/tracef "Adding field %s in entity %s to schema" aname ename)
+                         (let [f {:key (keyword (normalize-name aname))
+                                  :euuid euuid
+                                  :type t
+                                  :constraint constraint}]
+                           (assoc fields euuid
+                                  (case t
+                                    "enum"
+                                    (assoc f :postgres/type (normalize-name (str table \space aname)))
                                     ;;
-                                  "user"
-                                  (assoc f :postgres/reference iu/user)
+                                    "user"
+                                    (assoc f :postgres/reference iu/user)
                                     ;;
-                                  "group"
-                                  (assoc f :postgres/reference iu/user-group)
+                                    "group"
+                                    (assoc f :postgres/reference iu/user-group)
                                     ;;
-                                  "role"
-                                  (assoc f :postgres/reference iu/user-role)
+                                    "role"
+                                    (assoc f :postgres/reference iu/user-role)
                                     ;;
-                                  f))))
-                     {:audit/who {:key :modified_by
-                                  :type "user"
-                                  :postgres/reference iu/user}}
-                     (:attributes entity))
-             {relations :relations
-              recursions :recursions}
-             (group-by
-              (fn [{t :cardinality}]
-                (case t
-                  "tree" :recursions
-                  :relations))
-              (core/focus-entity-relations model entity))
+                                    f))))
+                       {:audit/who {:key :modified_by
+                                    :type "user"
+                                    :postgres/reference iu/user}}
+                       (:attributes entity))
+              {relations :relations
+               recursions :recursions}
+              (group-by
+                (fn [{t :cardinality}]
+                  (case t
+                    "tree" :recursions
+                    :relations))
+                (core/focus-entity-relations model entity))
               ;;
-             relations (reduce
-                        (fn [relations
-                             {:keys [euuid from to to-label cardinality]
-                              :as relation}]
+              relations (reduce
+                          (fn [relations
+                               {:keys [euuid from to to-label cardinality]
+                                :as relation}]
                           ;; ENTITY MIGHT BE CLONE... So get original entity for
                           ;; schema
-                          (if (and
-                               (some? from) (some? to)
-                               (not-empty to-label))
-                            (do
-                              (log/tracef
-                               "Building schema for relation\n%s"
-                               {:euuid euuid
-                                :from (:name from)
-                                :to (:name to)
-                                :cardinality cardinality})
-                              (assoc relations (keyword (normalize-name to-label))
-                                     {:relation euuid
-                                      :from (:euuid from)
-                                      :from/field (entity->relation-field from)
-                                      :from/table (entity->table-name from)
-                                      :to (if (contains? (:clones model) (:euuid to))
-                                            (get-in model [:clones (:euuid to) :entity])
-                                            (:euuid to))
-                                      :to/field (entity->relation-field to)
-                                      :to/table (entity->table-name to)
-                                      :table (relation->table-name relation)
-                                      :type (case cardinality
-                                              ("m2o" "o2o") :one
-                                              ("m2m" "o2m") :many)}))
-                            relations))
-                        {}
-                        relations)
-             recursions (set (map (comp keyword normalize-name :to-label) recursions))
-             mandatory-attributes (keep
-                                   (fn [{:keys [constraint name]}]
-                                     (when (#{"mandatory" "unique+mandatory"} constraint)
-                                       (keyword (normalize-name name))))
-                                   (:attributes entity))
-             entity-schema (cond->
-                            {:table table
-                             :name (:name entity)
-                             :constraints (cond->
-                                           (get-in entity [:configuration :constraints])
+                            (if (and
+                                  (some? from) (some? to)
+                                  (not-empty to-label))
+                              (do
+                                (log/tracef
+                                  "Building schema for relation\n%s"
+                                  {:euuid euuid
+                                   :from (:name from)
+                                   :to (:name to)
+                                   :cardinality cardinality})
+                                (assoc relations (keyword (normalize-name to-label))
+                                       {:relation euuid
+                                        :from (:euuid from)
+                                        :from/field (entity->relation-field from)
+                                        :from/table (entity->table-name from)
+                                        :to (if (contains? (:clones model) (:euuid to))
+                                              (get-in model [:clones (:euuid to) :entity])
+                                              (:euuid to))
+                                        :to/field (entity->relation-field to)
+                                        :to/table (entity->table-name to)
+                                        :table (relation->table-name relation)
+                                        :type (case cardinality
+                                                ("m2o" "o2o") :one
+                                                ("m2m" "o2m") :many)}))
+                              relations))
+                          {}
+                          relations)
+              recursions (set (map (comp keyword normalize-name :to-label) recursions))
+              mandatory-attributes (keep
+                                     (fn [{:keys [constraint name]}]
+                                       (when (#{"mandatory" "unique+mandatory"} constraint)
+                                         (keyword (normalize-name name))))
+                                     (:attributes entity))
+              entity-schema (cond->
+                              {:table table
+                               :name (:name entity)
+                               :constraints (cond->
+                                              (get-in entity [:configuration :constraints])
                                             ;;
-                                            (not-empty mandatory-attributes)
-                                            (assoc :mandatory mandatory-attributes))
-                             :fields fields
-                             :field->attribute (reduce-kv
-                                                (fn [r a {field :key}]
-                                                  (assoc r field a))
-                                                nil
-                                                fields)
-                             :recursions recursions
-                             :relations relations
-                             :audit/who :modified_by
-                             :audit/when :modified_on})]
-         (assoc schema euuid entity-schema)))
-     {}
-     (core/get-entities model))))
+                                              (not-empty mandatory-attributes)
+                                              (assoc :mandatory mandatory-attributes))
+                               :fields fields
+                               :field->attribute (reduce-kv
+                                                   (fn [r a {field :key}]
+                                                     (assoc r field a))
+                                                   nil
+                                                   fields)
+                               :recursions recursions
+                               :relations relations
+                               :audit/who :modified_by
+                               :audit/when :modified_on})]
+          (assoc schema euuid entity-schema)))
+      {}
+      (core/get-entities model))))
 
 (defn- get-dataset-versions
   "Gets all versions for a dataset by its :euuid or :name, ordered by modified_on desc"
   [{:keys [euuid name]}]
   (:versions
-   (dataset/get-entity
-    du/dataset
-    (if euuid
-      {:euuid euuid}
-      {:name name})
-    {:name nil
-     :euuid nil
-     :versions
-     [{:selections
-       {:euuid nil
-        :name nil
-        :model nil
-        :deployed nil
-        :modified_on nil}
-       :args {:_order_by {:modified_on :desc}}}]})))
+    (dataset/get-entity
+      du/dataset
+      (if euuid
+        {:euuid euuid}
+        {:name name})
+      {:name nil
+       :euuid nil
+       :versions
+       [{:selections
+         {:euuid nil
+          :name nil
+          :model nil
+          :deployed nil
+          :modified_on nil}
+         :args {:_order_by {:modified_on :desc}}}]})))
 
 (defn deployed-versions
   []
   (dataset/search-entity
-   du/dataset-version
-   {:deployed {:_boolean :TRUE}
-    :_order_by {:modified_on :asc}}
-   {:euuid nil
-    :model nil
-    :modified_on nil
-    :dataset [{:selections {:euuid nil}}]}))
+    du/dataset-version
+    {:deployed {:_boolean :TRUE}
+     :_order_by {:modified_on :asc}}
+    {:euuid nil
+     :model nil
+     :modified_on nil
+     :dataset [{:selections {:euuid nil}}]}))
 
 (defn get-version
   [euuid]
   (dataset/get-entity
-   du/dataset-version
-   {:euuid euuid}
-   {:euuid nil
-    :model nil
-    :modified_on nil
-    :dataset [{:selections {:euuid nil}}]}))
+    du/dataset-version
+    {:euuid euuid}
+    {:euuid nil
+     :model nil
+     :modified_on nil
+     :dataset [{:selections {:euuid nil}}]}))
 
 (comment
   (def version (get-version #uuid "b54595c9-3759-470f-9657-f4b0bc19e294"))
-  (dataset/sync-entity du/dataset-version {:euuid (:euuid version) :deployed true}))
+  (def latest-versions
+    (last-deployed-version-per-dataset))
+  (-> latest-versions first keys)
+  (map (comp (juxt :euuid :name) :dataset) latest-versions)
+  (dataset/sync-entity du/dataset-version {:euuid (:euuid version)
+                                           :deployed true})
+  
+  (def kb-ticketing
+    (dataset/latest-deployed-version #uuid "18df8188-8ffa-4d96-bf84-82b8b5a398b1"))
+  
+  (spit "/tmp/kb_ticketing_2.1.2_faza6" (->transit kb-ticketing))
+  (core/deploy! *db* (<-transit (slurp "/tmp/kb_ticketing_2.1.2_faza6"))))
 
 (defn last-deployed-version-per-dataset
   []
   (let [datasets (dataset/search-entity
-                  du/dataset
-                  nil
-                  {:euuid nil
-                   :versions [{:selections
-                               {:euuid nil
-                                :model nil
-                                :modified_on nil
-                                :dataset [{:selections {:euuid nil}}]}
-                               :args {:deployed {:_boolean :TRUE}
-                                      :_order_by {:modified_on :desc}
-                                      :_limit 1}}]})]
+                   du/dataset
+                   nil
+                   {:euuid nil
+                    :name nil
+                    :versions [{:selections
+                                {:euuid nil
+                                 :model nil
+                                 :modified_on nil
+                                 :dataset [{:selections {:euuid nil
+                                                         :name nil}}]}
+                                :args {:deployed {:_boolean :TRUE}
+                                       :_order_by {:modified_on :desc}
+                                       :_limit 1}}]})]
     (mapcat :versions datasets)))
 
 (defn deployed-version-per-dataset-euuids
@@ -1268,10 +1285,10 @@
                                             :relations {}})
          final-model
          (reduce
-          (fn [global {:keys [euuid model]}]
-            (core/join-models global (core/add-claims model euuid)))
-          initial-model
-          all-versions)]
+           (fn [global {:keys [euuid model]}]
+             (core/join-models global (core/add-claims model euuid)))
+           initial-model
+           all-versions)]
      (core/activate-model final-model (deployed-version-per-dataset-euuids)))))
 
 (defn last-deployed-model
@@ -1288,23 +1305,23 @@
   "Throws exception if new-model contains entities with conflicting names"
   [global new-model]
   (let [entities-by-table (reduce
-                           (fn [r entity]
-                             (assoc r (entity->table-name entity) entity))
-                           {}
-                           (core/get-entities global))]
+                            (fn [r entity]
+                              (assoc r (entity->table-name entity) entity))
+                            {}
+                            (core/get-entities global))]
     (doseq [new-entity (core/get-entities new-model)
             :let [table (entity->table-name new-entity)
                   found-entity (get entities-by-table table)]]
       (when (and
-             (some? found-entity)
-             (not= (:euuid found-entity) (:euuid new-entity)))
+              (some? found-entity)
+              (not= (:euuid found-entity) (:euuid new-entity)))
         (throw
-         (ex-info
-          (format "Entity name conflict: '%s' already exists with different UUID" (:name new-entity))
-          {:type ::entity-name-conflict
-           :new-entity new-entity
-           :existing-entity (get entities-by-table table)
-           :table-name (entity->table-name new-entity)}))))))
+          (ex-info
+            (format "Entity name conflict: '%s' already exists with different UUID" (:name new-entity))
+            {:type ::entity-name-conflict
+             :new-entity new-entity
+             :existing-entity (get entities-by-table table)
+             :table-name (entity->table-name new-entity)}))))))
 
 (extend-type neyho.eywa.Postgres
   core/DatasetProtocol
@@ -1329,15 +1346,15 @@
 
             ;; 4. Prepare version metadata for saving (with original model v1, not global)
             version'' (assoc
-                       version
-                       :model (assoc model :version 1)
+                        version
+                        :model (assoc model :version 1)
                         ; :entities (core/get-entities model)
                         ; :relations (map
                         ;              #(-> %
                         ;                   (update :from :euuid)
                         ;                   (update :to :euuid))
                         ;              (core/get-relations model))
-                       :deployed true)]
+                        :deployed true)]
 
         ;; Mark version as deployed in database
         (sync-entity this du/dataset-version version'')
@@ -1351,6 +1368,9 @@
           (core/add-to-deploy-history this updated-model)
           ;; Regenerate GraphQL schema with updated active flags
           (try
+            (comment
+              (rebuild-global-model)
+              (def this *db*))
             (lacinia/add-shard ::datasets (fn [] (lacinia/generate-lacinia-schema this)))
             (catch Throwable e
               (log/error e "Couldn't add lacinia schema shard"))))
@@ -1369,14 +1389,14 @@
 
     ;; 1. Query the version to get its information
     (let [version (dataset/get-entity
-                   du/dataset-version
-                   {:euuid euuid}
-                   {:euuid nil
-                    :name nil
-                    :model nil
-                    :deployed nil
-                    :dataset [{:selections {:euuid nil
-                                            :name nil}}]})
+                    du/dataset-version
+                    {:euuid euuid}
+                    {:euuid nil
+                     :name nil
+                     :model nil
+                     :deployed nil
+                     :dataset [{:selections {:euuid nil
+                                             :name nil}}]})
 
           _ (when-not version
               (throw (ex-info (format "Version %s not found" euuid)
@@ -1557,8 +1577,8 @@
        model'))
     ([this {:keys [model euuid]}]
      (let [global (or
-                   (core/get-model this)
-                   (core/map->ERDModel nil))
+                    (core/get-model this)
+                    (core/map->ERDModel nil))
            model' (core/join-models global (core/add-claims model euuid))
            model'' (core/activate-model model' (deployed-version-per-dataset-euuids))
            schema (model->schema model'')]
@@ -1577,18 +1597,18 @@
       (comment
         (def global (core/map->ERDModel nil)))
       (let [global (or
-                    (core/get-model this)
-                    (core/map->ERDModel nil))
+                     (core/get-model this)
+                     (core/map->ERDModel nil))
             ;; Model already has updated definitions and claims from deploy!
             projection (core/project global model)]
         (binding [*model* global]
           (transform-database
-           con projection
-           {:who/table
-            (entity->table-name
-             (some
-              #(core/get-entity % iu/user)
-              [global projection]))}))
+            con projection
+            {:who/table
+             (entity->table-name
+               (some
+                 #(core/get-entity % iu/user)
+                 [global projection]))}))
         ;; Return model as-is (already contains full global state with claims)
         version)))
   (core/unmount
@@ -1603,10 +1623,10 @@
           (try
             (execute-one! con [sql])
             (log/tracef
-             "Removing relation from %s to %s\n%s"
-             (:name from)
-             (:name to)
-             sql)
+              "Removing relation from %s to %s\n%s"
+              (:name from)
+              (:name to)
+              sql)
             (delete-entity this du/dataset-relation (select-keys relation [:euuid]))
             (catch Throwable e
               (log/errorf e "Couldn't remove table %s" (relation->table-name relation)))))
@@ -1703,34 +1723,34 @@
     ([_ offset]
      (with-open [connection (jdbc/get-connection (:datasource *db*))]
        (when-let [m (n/execute-one!
-                     connection
-                     [(cond->
-                       "select model from __deploy_history order by deployed_on desc"
-                        offset (str " offset " offset))])]
+                      connection
+                      [(cond->
+                         "select model from __deploy_history order by deployed_on desc"
+                         offset (str " offset " offset))])]
          (let [model (-> m :model <-transit)
                clean-model (reduce
-                            (fn [m entity]
-                              (if (empty? (:attributes entity))
-                                (core/remove-entity m entity)
-                                m))
-                            model
-                            (core/get-entities model))
+                             (fn [m entity]
+                               (if (empty? (:attributes entity))
+                                 (core/remove-entity m entity)
+                                 m))
+                             model
+                             (core/get-entities model))
                clean-schema (model->schema clean-model)]
            (with-meta clean-model {:dataset/schema clean-schema}))))))
   (core/create-deploy-history [_]
     (with-open [connection (jdbc/get-connection (:datasource *db*))]
       (n/execute-one!
-       connection
-       [(format
-         "create table __deploy_history (
+        connection
+        [(format
+           "create table __deploy_history (
            \"deployed_on\" timestamp not null default localtimestamp,
            \"model\" text)")])))
   (core/add-to-deploy-history [_ model]
     (with-open [connection (jdbc/get-connection (:datasource *db*))]
       (n/execute-one!
-       connection
-       ["insert into __deploy_history (model) values (?)"
-        (->transit model)])))
+        connection
+        ["insert into __deploy_history (model) values (?)"
+         (->transit model)])))
   ;;
   lacinia/EYWAGraphQL
   (generate-lacinia-schema [_]
@@ -1745,37 +1765,37 @@
       (if (keyword? value)
         (get-in relations [value :table])
         (some
-         (fn [[_ {:keys [relation table]}]]
-           (when (= relation value)
-             table))
-         relations))))
+          (fn [[_ {:keys [relation table]}]]
+            (when (= relation value)
+              table))
+          relations))))
   (related-table [_ table value]
     (let [{:keys [relations]} (query/deployed-schema-entity table)]
       (if (keyword? value)
         (get-in relations [value :to/table])
         (some
-         (fn [[_ {:keys [relation table]}]]
-           (when (= relation value)
-             table))
-         relations))))
+          (fn [[_ {:keys [relation table]}]]
+            (when (= relation value)
+              table))
+          relations))))
   (relation-from-field [_ table value]
     (let [{:keys [relations]} (query/deployed-schema-entity table)]
       (if (keyword? value)
         (get-in relations [value :from/field])
         (some
-         (fn [[_ {:keys [relation :from/field]}]]
-           (when (= relation value)
-             field))
-         relations))))
+          (fn [[_ {:keys [relation :from/field]}]]
+            (when (= relation value)
+              field))
+          relations))))
   (relation-to-field [_ table value]
     (let [{:keys [relations]} (query/deployed-schema-entity table)]
       (if (keyword? value)
         (get-in relations [value :to/field])
         (some
-         (fn [[_ {:keys [relation :to/field]}]]
-           (when (= relation value)
-             field))
-         relations)))))
+          (fn [[_ {:keys [relation :to/field]}]]
+            (when (= relation value)
+              field))
+          relations)))))
 
 ;; Version compatibility fix
 (defn fix-on-delete-set-null-to-references
@@ -1784,41 +1804,41 @@
     (let [model (dataset/deployed-model)
           entities (core/get-entities model)]
       (reduce
-       (fn [r entity]
-         (let [user-table-name (user-table)
-               entity-table (entity->table-name entity)
-               modified_by (str entity-table \_ "modified_by_fkey")
-               refered-attributes (filter
-                                   (comp
-                                    #{"user" "group" "role"}
-                                    :type)
-                                   (:attributes entity))
+        (fn [r entity]
+          (let [user-table-name (user-table)
+                entity-table (entity->table-name entity)
+                modified_by (str entity-table \_ "modified_by_fkey")
+                refered-attributes (filter
+                                     (comp
+                                       #{"user" "group" "role"}
+                                       :type)
+                                     (:attributes entity))
                 ;;
-               current-result
-               (conj r
-                     (format "alter table \"%s\" drop constraint \"%s\"" entity-table modified_by)
-                     (format
-                      "alter table \"%s\" add constraint \"%s\" foreign key (modified_by) references \"%s\"(_eid) on delete set null"
-                      entity-table modified_by user-table-name))]
-           (reduce
-            (fn [r {attribute-name :name
-                    attribute-type :type}]
-              (let [attribute-column (normalize-name attribute-name)
-                    constraint-name (str entity-table \_ attribute-column "_fkey")
-                    refered-table (case attribute-type
-                                    "user" (user-table)
-                                    "group" (group-table)
-                                    "role" (role-table))]
-                (conj
-                 r
-                 (format "alter table \"%s\" drop constraint %s" entity-table constraint-name)
-                 (format
-                  "alter table \"%s\" add constraint \"%s\" foreign key (%s) references \"%s\"(_eid) on delete set null"
-                  entity-table constraint-name attribute-column refered-table))))
-            current-result
-            refered-attributes)))
-       []
-       entities))))
+                current-result
+                (conj r
+                      (format "alter table \"%s\" drop constraint \"%s\"" entity-table modified_by)
+                      (format
+                        "alter table \"%s\" add constraint \"%s\" foreign key (modified_by) references \"%s\"(_eid) on delete set null"
+                        entity-table modified_by user-table-name))]
+            (reduce
+              (fn [r {attribute-name :name
+                      attribute-type :type}]
+                (let [attribute-column (normalize-name attribute-name)
+                      constraint-name (str entity-table \_ attribute-column "_fkey")
+                      refered-table (case attribute-type
+                                      "user" (user-table)
+                                      "group" (group-table)
+                                      "role" (role-table))]
+                  (conj
+                    r
+                    (format "alter table \"%s\" drop constraint %s" entity-table constraint-name)
+                    (format
+                      "alter table \"%s\" add constraint \"%s\" foreign key (%s) references \"%s\"(_eid) on delete set null"
+                      entity-table constraint-name attribute-column refered-table))))
+              current-result
+              refered-attributes)))
+        []
+        entities))))
 
 (defn get-relation-indexes
   [relation]
@@ -1841,20 +1861,20 @@
                      (let [model (dataset/deployed-model)
                            relations (core/get-relations model)]
                        (reduce
-                        (fn [r {:keys [from to]
-                                :as relation}]
-                          (let [table (relation->table-name relation)
-                                from-field (entity->relation-field from)
-                                to-field (entity->relation-field to)
-                                indexes (set (map :index (get-relation-indexes relation)))]
-                            (cond-> r
-                              (not (indexes (str table \_ "fidx")))
-                              (conj (format "create index %s_fidx on \"%s\" (%s);" table table from-field))
+                         (fn [r {:keys [from to]
+                                 :as relation}]
+                           (let [table (relation->table-name relation)
+                                 from-field (entity->relation-field from)
+                                 to-field (entity->relation-field to)
+                                 indexes (set (map :index (get-relation-indexes relation)))]
+                             (cond-> r
+                               (not (indexes (str table \_ "fidx")))
+                               (conj (format "create index %s_fidx on \"%s\" (%s);" table table from-field))
                                ;;
-                              (not (indexes (str table \_ "tidx")))
-                              (conj (format "create index %s_tidx on \"%s\" (%s);" table table to-field)))))
-                        []
-                        relations)))]
+                               (not (indexes (str table \_ "tidx")))
+                               (conj (format "create index %s_tidx on \"%s\" (%s);" table table to-field)))))
+                         []
+                         relations)))]
     (with-open [con (jdbc/get-connection (:datasource *db*))]
       (doseq [statement statements]
         (try
@@ -1886,36 +1906,36 @@
     (let [model (dataset/deployed-model)
           entities (core/get-entities model)
           statements (reduce
-                      (fn [statements entity]
-                        (let [entity-table (entity->table-name entity)
+                       (fn [statements entity]
+                         (let [entity-table (entity->table-name entity)
 
                               ;; Handle modified_by column (always references user)
-                              modified-by-type (get-column-type entity-table "modified_by")
-                              modified-by-statements
-                              (if (and modified-by-type (= "integer" (:data_type modified-by-type)))
-                                [(format "ALTER TABLE \"%s\" ALTER COLUMN modified_by TYPE bigint" entity-table)]
-                                [])
+                               modified-by-type (get-column-type entity-table "modified_by")
+                               modified-by-statements
+                               (if (and modified-by-type (= "integer" (:data_type modified-by-type)))
+                                 [(format "ALTER TABLE \"%s\" ALTER COLUMN modified_by TYPE bigint" entity-table)]
+                                 [])
 
                               ;; Handle entity attributes
-                              attribute-statements
-                              (reduce
-                               (fn [attr-statements {:keys [name type]}]
-                                 (if-not (contains? #{"user" "group" "role" "int"} type)
-                                   attr-statements
-                                   (let [column-name (normalize-name name)
-                                         current-type (get-column-type entity-table column-name)
-                                         needs-conversion? (and current-type (= "integer" (:data_type current-type)))]
-                                     (if needs-conversion?
-                                       (conj attr-statements
-                                             (format "ALTER TABLE \"%s\" ALTER COLUMN %s TYPE bigint"
-                                                     entity-table column-name))
-                                       attr-statements))))
-                               []
-                               (:attributes entity))]
+                               attribute-statements
+                               (reduce
+                                 (fn [attr-statements {:keys [name type]}]
+                                   (if-not (contains? #{"user" "group" "role" "int"} type)
+                                     attr-statements
+                                     (let [column-name (normalize-name name)
+                                           current-type (get-column-type entity-table column-name)
+                                           needs-conversion? (and current-type (= "integer" (:data_type current-type)))]
+                                       (if needs-conversion?
+                                         (conj attr-statements
+                                               (format "ALTER TABLE \"%s\" ALTER COLUMN %s TYPE bigint"
+                                                       entity-table column-name))
+                                         attr-statements))))
+                                 []
+                                 (:attributes entity))]
 
-                          (concat statements modified-by-statements attribute-statements)))
-                      []
-                      entities)]
+                           (concat statements modified-by-statements attribute-statements)))
+                       []
+                       entities)]
       (with-open [con (jdbc/get-connection (:datasource *db*))]
         (doseq [statement statements]
           (try
@@ -1952,30 +1972,30 @@
     (let [model (dataset/deployed-model)
           entities (core/get-entities model)
           statements (reduce
-                      (fn [statements entity]
-                        (let [entity-table (entity->table-name entity)
+                       (fn [statements entity]
+                         (let [entity-table (entity->table-name entity)
 
                               ;; Get all mandatory attributes for this entity
-                              mandatory-attributes (filter is-mandatory-attribute? (:attributes entity))
+                               mandatory-attributes (filter is-mandatory-attribute? (:attributes entity))
 
                               ;; Generate ALTER TABLE statements for mandatory attributes
-                              attribute-statements
-                              (reduce
-                               (fn [attr-statements {:keys [name]}]
-                                 (let [column-name (normalize-name name)
-                                       column-info (get-column-constraints entity-table column-name)
-                                       has-not-null? (and column-info (= "NO" (:is_nullable column-info)))]
-                                   (if has-not-null?
-                                     (conj attr-statements
-                                           (format "ALTER TABLE \"%s\" ALTER COLUMN %s DROP NOT NULL"
-                                                   entity-table column-name))
-                                     attr-statements)))
-                               []
-                               mandatory-attributes)]
+                               attribute-statements
+                               (reduce
+                                 (fn [attr-statements {:keys [name]}]
+                                   (let [column-name (normalize-name name)
+                                         column-info (get-column-constraints entity-table column-name)
+                                         has-not-null? (and column-info (= "NO" (:is_nullable column-info)))]
+                                     (if has-not-null?
+                                       (conj attr-statements
+                                             (format "ALTER TABLE \"%s\" ALTER COLUMN %s DROP NOT NULL"
+                                                     entity-table column-name))
+                                       attr-statements)))
+                                 []
+                                 mandatory-attributes)]
 
-                          (concat statements attribute-statements)))
-                      []
-                      entities)]
+                           (concat statements attribute-statements)))
+                       []
+                       entities)]
       ;; Execute the statements
       (with-open [con (jdbc/get-connection (:datasource *db*))]
         (doseq [statement statements]
@@ -2043,15 +2063,15 @@
 
         ;; Get all expected relation tables from schema
         expected-relation-tables (set (mapcat
-                                       (fn [[_ entity-data]]
-                                         (map :table (vals (:relations entity-data))))
-                                       schema))
+                                        (fn [[_ entity-data]]
+                                          (map :table (vals (:relations entity-data))))
+                                        schema))
 
         ;; Get all expected enum types from schema
         expected-enums (set (mapcat
-                             (fn [[_ entity-data]]
-                               (keep :postgres/type (vals (:fields entity-data))))
-                             schema))
+                              (fn [[_ entity-data]]
+                                (keep :postgres/type (vals (:fields entity-data))))
+                              schema))
 
         expected-tables (clojure.set/union expected-entity-tables expected-relation-tables)
 
@@ -2069,8 +2089,8 @@
         (for [[entity-uuid entity-data] schema
               :let [table-name (:table entity-data)
                     expected-cols (set (concat
-                                        [:_eid :euuid :modified_by :modified_on]
-                                        (map :key (vals (:fields entity-data)))))
+                                         [:_eid :euuid :modified_by :modified_on]
+                                         (map :key (vals (:fields entity-data)))))
                     actual-cols (when (pg-tables table-name)
                                   (get-pg-columns table-name))
                     missing (when actual-cols
@@ -2225,16 +2245,16 @@
   (def deployed (deployed-versions))
   (def without-dataset
     (filter
-     (fn [{{euuid :euuid} :dataset}]
-       (nil? euuid))
-     deployed))
+      (fn [{{euuid :euuid} :dataset}]
+        (nil? euuid))
+      deployed))
   (doseq [version without-dataset]
     (println "DELETING: " (:euuid version))
     (println (dataset/delete-entity du/dataset-version {:euuid (:euuid version)})))
   (def versions
     (dataset/get-entity
-     du/dataset
-     {:euuid #uuid "743a9023-3980-405a-8340-3527d91064d8"}
-     {:versions [{:selections
-                  {:euuid nil
-                   :name nil}}]})))
+      du/dataset
+      {:euuid #uuid "743a9023-3980-405a-8340-3527d91064d8"}
+      {:versions [{:selections
+                   {:euuid nil
+                    :name nil}}]})))

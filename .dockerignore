@@ -1,0 +1,48 @@
+# Git
+.git
+.gitignore
+.gitmodules
+
+# Development
+.cpcache
+.clj-kondo
+.lsp
+target
+.shadow-cljs
+node_modules
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Documentation
+doc/
+docs/
+*.md
+!README.md
+
+# Test
+test/
+
+# Build artifacts
+*.jar
+!target/*.jar
+
+# Examples
+examples/

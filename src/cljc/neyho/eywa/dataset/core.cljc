@@ -1226,3 +1226,193 @@
   (mark-diff [_ _] nil)
   ; (suppress [_ _])
   (project [_ that] (when that (mark-added that))))
+
+
+;;; RLS Guards - Row Level Security
+
+;; Path labels - auto-generated A, B, C...
+(def ^:private path-labels "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+(defn get-path-label
+  "Get letter label for path index (0 -> A, 1 -> B, etc.)"
+  [idx]
+  (str (nth path-labels (mod idx 26))))
+
+(defn iam-entity-type
+  "Returns the IAM entity type keyword for a given entity UUID.
+   Requires iam-uuids map with :user, :group, :role keys."
+  [euuid iam-uuids]
+  (cond
+    (= euuid (:user iam-uuids)) :user
+    (= euuid (:group iam-uuids)) :group
+    (= euuid (:role iam-uuids)) :role
+    :else nil))
+
+(defn discover-paths-to-iam
+  "Performs BFS from entity to find all paths to IAM entities (User, UserGroup, UserRole).
+
+   Arguments:
+   - model: The ERD model
+   - entity: The source entity to start from
+   - iam-uuids: Map with :user, :group, :role keys containing entity UUIDs
+   - max-depth: Maximum number of hops (default 3)
+
+   Returns a vector of paths, each path containing:
+   {:id \"A\"
+    :target :user | :group | :role
+    :target-name \"User\" | \"UserGroup\" | \"UserRole\"
+    :target-euuid #uuid \"...\"
+    :steps [{:relation-euuid #uuid \"...\"
+             :label \"assigned_to\"
+             :entity-euuid #uuid \"...\"
+             :entity-name \"Entity\"}]
+    :depth 1}"
+  ([model entity iam-uuids]
+   (discover-paths-to-iam model entity iam-uuids 3))
+  ([model entity iam-uuids max-depth]
+   (when (and model entity)
+     (let [entity-euuid (:euuid entity)
+           iam-entity-uuids (set (vals iam-uuids))]
+       (loop [queue [{:entity entity
+                      :steps []
+                      :visited #{entity-euuid}}]
+              paths []
+              path-idx 0]
+         (if (empty? queue)
+           paths
+           (let [{:keys [entity steps visited]} (first queue)
+                 remaining (rest queue)
+                 current-depth (count steps)]
+             (if (>= current-depth max-depth)
+               ;; Max depth reached, continue with remaining queue
+               (recur remaining paths path-idx)
+               ;; Explore relations from current entity
+               (let [relations (focus-entity-relations model entity)
+                     ;; Process each relation
+                     new-items
+                     (reduce
+                      (fn [acc relation]
+                        (let [target-entity (:to relation)
+                              target-euuid (:euuid target-entity)
+                              relation-label (or (:to-label relation) (:from-label relation) "")]
+                          (if (contains? visited target-euuid)
+                            acc ;; Skip already visited
+                            (let [new-step {:relation-euuid (:euuid relation)
+                                            :label relation-label
+                                            :entity-euuid target-euuid
+                                            :entity-name (:name target-entity)}
+                                  new-steps (conj steps new-step)
+                                  new-visited (conj visited target-euuid)]
+                              (if (contains? iam-entity-uuids target-euuid)
+                                ;; Found IAM entity - add to paths
+                                (update acc :paths conj
+                                        {:id (get-path-label (+ path-idx (count (:paths acc))))
+                                         :target (iam-entity-type target-euuid iam-uuids)
+                                         :target-name (:name target-entity)
+                                         :target-euuid target-euuid
+                                         :steps new-steps
+                                         :depth (count new-steps)})
+                                ;; Not IAM - add to queue for further exploration
+                                (update acc :queue conj
+                                        {:entity target-entity
+                                         :steps new-steps
+                                         :visited new-visited}))))))
+                      {:paths []
+                       :queue []}
+                      relations)]
+                 (recur (into (vec remaining) (:queue new-items))
+                        (into paths (:paths new-items))
+                        (+ path-idx (count (:paths new-items)))))))))))))
+
+
+;; RLS Configuration Helpers
+
+(defn get-rls-config
+  "Get RLS configuration from entity"
+  [entity]
+  (get-in entity [:configuration :rls]))
+
+(defn set-rls-config
+  "Set RLS configuration on entity"
+  [entity rls-config]
+  (assoc-in entity [:configuration :rls] rls-config))
+
+(defn rls-enabled?
+  "Check if RLS is enabled for entity"
+  [entity]
+  (get-in entity [:configuration :rls :enabled] false))
+
+(defn set-rls-enabled
+  "Enable or disable RLS for entity"
+  [entity enabled]
+  (assoc-in entity [:configuration :rls :enabled] enabled))
+
+(defn get-rls-guards
+  "Get RLS guards from entity"
+  [entity]
+  (get-in entity [:configuration :rls :guards] []))
+
+(defn set-rls-guards
+  "Set RLS guards on entity"
+  [entity guards]
+  (assoc-in entity [:configuration :rls :guards] guards))
+
+(defn add-rls-guard
+  "Add a new RLS guard to entity"
+  [entity guard]
+  (update-in entity [:configuration :rls :guards]
+             (fnil conj [])
+             guard))
+
+(defn remove-rls-guard
+  "Remove an RLS guard by id"
+  [entity guard-id]
+  (update-in entity [:configuration :rls :guards]
+             (fn [guards]
+               (vec (remove #(= (:id %) guard-id) guards)))))
+
+(defn find-guard-index
+  "Find the index of a guard by id"
+  [guards guard-id]
+  (first (keep-indexed
+          (fn [idx g] (when (= (:id g) guard-id) idx))
+          guards)))
+
+(defn toggle-rls-operation
+  "Toggle a Read/Write operation on a guard"
+  [entity guard-id operation]
+  (let [guards (get-rls-guards entity)
+        guard-idx (find-guard-index guards guard-id)]
+    (if guard-idx
+      (let [current-ops (get-in guards [guard-idx :operation] #{})
+            new-ops (if (contains? current-ops operation)
+                      (disj current-ops operation)
+                      (conj current-ops operation))]
+        (assoc-in entity [:configuration :rls :guards guard-idx :operation] new-ops))
+      entity)))
+
+(defn toggle-rls-condition
+  "Toggle a path condition on a guard. If guard doesn't exist, creates a new one."
+  [entity guard-id path]
+  (let [guards (get-rls-guards entity)
+        guard-idx (find-guard-index guards guard-id)
+        path-id (:id path)]
+    (if guard-idx
+      ;; Toggle condition on existing guard
+      (let [conditions (get-in guards [guard-idx :conditions] [])
+            condition-paths (set (map :path-id conditions))
+            new-conditions (if (contains? condition-paths path-id)
+                             (vec (remove #(= (:path-id %) path-id) conditions))
+                             (conj conditions {:path-id path-id
+                                               :target (:target path)
+                                               :target-euuid (:target-euuid path)
+                                               :steps (:steps path)}))]
+        (assoc-in entity [:configuration :rls :guards guard-idx :conditions] new-conditions))
+      ;; Guard not found - create new guard with this condition
+      (let [new-guard {:id (generate-uuid)
+                       :operation #{}
+                       :conditions [{:path-id path-id
+                                     :target (:target path)
+                                     :target-euuid (:target-euuid path)
+                                     :steps (:steps path)}]}]
+        (add-rls-guard entity new-guard)))))
