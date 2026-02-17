@@ -1,22 +1,218 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, shrink-to-fit=no"
+    />
+    <title>EYWA Documentation</title>
+    <meta
+      name="description"
+      content="EYWA Platform Documentation - Data Modeling, GraphQL API, Identity & Access Management"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
 
-<head lang="en" data-theme="light">
-  <meta charset="UTF-8">
-  <title>EYWA Documentation</title>
-  <link rel="icon" href="/eywa/favicon.svg" type="image/svg+xml">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Caveat+Brush&family=Inter:wght@100..900&family=Montserrat:ital,wght@0,100..900;1,100..900&family=Nunito:ital,wght@0,200..1000;1,200..1000&family=Raleway:ital,wght@0,100..900;1,100..900&display=swap"
-    rel="stylesheet">
-  <link rel="stylesheet" href="/eywa/css/main.gC8PP.css" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-</head>
+    <!-- Ty CSS System -->
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@gersak/ty@latest/css/ty.css"
+    />
 
-<body>
-  <div id="app"></div>
-  <script src="/eywa/js/main.gC8PP.js"></script>
-</body>
+    <!-- Ty Web Components -->
+    <script src="https://cdn.jsdelivr.net/npm/@gersak/ty/dist/ty.js"></script>
 
+    <!-- Highlight.js for code syntax highlighting -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css"
+      id="hljs-light"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+      id="hljs-dark"
+      disabled
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/clojure.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/graphql.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+
+    <style>
+      /* EYWA Custom Theme - Override Ty accent color (teal) */
+      :root {
+        /* Text colors */
+        --ty-color-accent-mild: #1a7a65;
+        --ty-color-accent: #2d9c85;
+        --ty-color-accent-soft: #5fbda8;
+
+        /* Background colors */
+        --ty-bg-accent: #d1faf0;
+        --ty-bg-accent-mild: #a8f0e0;
+        --ty-bg-accent-soft: #e8fcf7;
+
+        /* Border colors */
+        --ty-border-accent-mild: #1a7a65;
+        --ty-border-accent: #2d9c85;
+        --ty-border-accent-soft: #5fbda8;
+
+        /* For filled buttons */
+        --ty-accent-accent: #1a7a65;
+      }
+
+      :root.dark {
+        /* Text colors */
+        --ty-color-accent-mild: #4dcfb3;
+        --ty-color-accent: #3dbda0;
+        --ty-color-accent-soft: #2a9a80;
+
+        /* Background colors */
+        --ty-bg-accent: #1a4d42;
+        --ty-bg-accent-mild: #236b5c;
+        --ty-bg-accent-soft: #12352e;
+
+        /* Border colors */
+        --ty-border-accent-mild: #4dcfb3;
+        --ty-border-accent: #3dbda0;
+        --ty-border-accent-soft: #2a9a80;
+
+        /* For filled buttons */
+        --ty-accent-accent: #3dbda0;
+      }
+
+      /* iOS fix - prevents scroll bounce and keyboard layout breaking */
+      html,
+      body {
+        height: 100%;
+        overflow: hidden;
+        position: fixed;
+        width: 100%;
+      }
+
+      #app {
+        height: 100%;
+        width: 100%;
+        overflow: hidden;
+      }
+
+      /* Code block styling */
+      pre,
+      code {
+        overflow-x: auto;
+        word-break: break-word;
+        white-space: pre-wrap;
+      }
+
+      .hljs {
+        background: var(--ty-surface-elevated) !important;
+        color: var(--ty-text) !important;
+        border: 1px solid var(--ty-border);
+        border-radius: 8px;
+        padding: 1rem !important;
+        font-size: 12px;
+        line-height: 1.5;
+        margin: 0;
+      }
+
+      .hljs-keyword,
+      .hljs-selector-tag,
+      .hljs-built_in,
+      .hljs-name {
+        color: var(--ty-color-primary) !important;
+      }
+
+      .hljs-string,
+      .hljs-attr {
+        color: var(--ty-color-success) !important;
+      }
+
+      .hljs-number,
+      .hljs-literal {
+        color: var(--ty-color-info) !important;
+      }
+
+      .hljs-comment {
+        color: var(--ty-text--) !important;
+        font-style: italic;
+      }
+
+      .hljs-function,
+      .hljs-title {
+        color: var(--ty-color-secondary) !important;
+      }
+
+      code:not(.hljs) {
+        background: var(--ty-surface-content);
+        color: var(--ty-text +);
+        padding: 0.125rem 0.375rem;
+        border-radius: 4px;
+        font-size: 0.875em;
+        border: 1px solid var(--ty-border-);
+      }
+
+      pre.hljs {
+        white-space: pre;
+        word-break: normal;
+      }
+
+      /* Mobile typography */
+      @media (max-width: 768px) {
+        html {
+          font-size: 14px;
+        }
+      }
+    </style>
+
+    <script>
+      // Set initial theme
+      const storedTheme = localStorage.getItem("theme");
+      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
+        .matches
+        ? "dark"
+        : "light";
+      const theme = storedTheme || systemTheme || "dark";
+
+      if (theme === "dark") {
+        document.documentElement.classList.add("dark");
+      }
+
+      document.addEventListener("DOMContentLoaded", function () {
+        updateHighlightTheme(theme);
+      });
+
+      function updateHighlightTheme(theme) {
+        const lightTheme = document.getElementById("hljs-light");
+        const darkTheme = document.getElementById("hljs-dark");
+
+        if (theme === "dark") {
+          lightTheme.disabled = true;
+          darkTheme.disabled = false;
+        } else {
+          lightTheme.disabled = false;
+          darkTheme.disabled = true;
+        }
+      }
+
+      const observer = new MutationObserver(function (mutations) {
+        mutations.forEach(function (mutation) {
+          if (mutation.attributeName === "class") {
+            const isDark = document.documentElement.classList.contains("dark");
+            updateHighlightTheme(isDark ? "dark" : "light");
+          }
+        });
+      });
+
+      observer.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["class"],
+      });
+    </script>
+  </head>
+
+  <body>
+    <div id="app"></div>
+    <script defer src="/eywa/js/site.0f4d3827.js"></script>
+  </body>
 </html>
