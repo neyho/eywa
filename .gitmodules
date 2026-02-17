@@ -9,4 +9,4 @@
 	url = git@github.com:neyho/eywa-frontend.git
 [submodule "patcho"]
 	path = patcho
-	url = ./patcho
+	url = https://github.com/gersak/patcho.git
