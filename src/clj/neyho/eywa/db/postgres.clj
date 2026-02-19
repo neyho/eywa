@@ -7,7 +7,7 @@
     [neyho.eywa :as eywa]
     [neyho.eywa.db]
     [neyho.eywa.db.postgres.next
-     :refer [execute-one! clear-connections]])
+     :refer [execute-one! clear-connections quote-identifier]])
   (:import
     [com.zaxxer.hikari HikariDataSource]))
 
@@ -118,7 +118,7 @@
       (with-open [connection (jdbc/get-connection (:datasource admin-db))]
         (execute-one!
           connection
-          [(format "create database %s" database-name)]))
+          [(str "CREATE DATABASE " (quote-identifier database-name))]))
       (let [db (connect (assoc admin :db database-name))]
         (try
           (with-open [connection (jdbc/get-connection (:datasource db))]
@@ -148,22 +148,24 @@
         (clear-connections con database)
         (execute-one!
           con
-          [(format "drop database if exists %s" database)]))
+          [(str "DROP DATABASE IF EXISTS " (quote-identifier database))]))
       (finally
         (.close (:datasource admin)))))
   nil)
 
 (defn backup
   "Function will connect to admin db and backup 'database' under 'backup' name"
-  [^neyho.eywa.Postgres admin database backup]
+  [^neyho.eywa.Postgres admin database backup-name]
   (let [db (connect admin)]
     (with-open [con (jdbc/get-connection (:datasource db))]
+      ;; Use parameterized query for datname comparison
       (jdbc/execute!
         con
-        [(format "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='%s'" database)])
+        ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ?" database])
+      ;; Use quoted identifiers for database names
       (jdbc/execute!
         con
-        [(format "create database %s with template '%s'" backup database)]))
+        [(str "CREATE DATABASE " (quote-identifier backup-name) " WITH TEMPLATE " (quote-identifier database))]))
     true))
 
 (defonce connection-agent (agent {:running? true}))

@@ -4,6 +4,7 @@
     [neyho.eywa.setup :as s]
     [next.jdbc :as jdbc]
     [neyho.eywa :as eywa]
+    [neyho.eywa.db.postgres.next :refer [quote-identifier]]
     [neyho.config :refer [load-config]]
     [com.stuartsierra.component :as component]))
 
@@ -26,9 +27,14 @@
 (defn backup-account [{:keys [account postgres]} backup-name]
   (let [{:keys [datasource] :as db} (component/start (eywa/map->Postgres (assoc postgres :db "eywa")))]
     (with-open [con (jdbc/get-connection datasource)]
+      ;; Use parameterized query for datname comparison
       (jdbc/execute-one!
         con
-        [(format "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='%s';create database %s with template '%s'" account backup-name account)]))
+        ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ?" account])
+      ;; Use quoted identifiers for database names
+      (jdbc/execute-one!
+        con
+        [(str "CREATE DATABASE " (quote-identifier backup-name) " WITH TEMPLATE " (quote-identifier account))]))
     (component/stop db)
     true))
 

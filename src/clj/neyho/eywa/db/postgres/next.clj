@@ -16,10 +16,27 @@
   (:import
     [java.sql ResultSet ResultSetMetaData]))
 
+(defn valid-identifier?
+  "Validates that a string is a safe PostgreSQL identifier.
+   Only allows alphanumeric characters, underscores, and hyphens. Must start with letter or underscore."
+  [s]
+  (and (string? s)
+       (not (clojure.string/blank? s))
+       (re-matches #"^[a-zA-Z_][a-zA-Z0-9_-]*$" s)))
+
+(defn quote-identifier
+  "Safely quotes a PostgreSQL identifier (database name, table name, etc.).
+   Validates the identifier first to prevent SQL injection."
+  [s]
+  (when-not (valid-identifier? s)
+    (throw (ex-info "Invalid PostgreSQL identifier" {:identifier s})))
+  (str \" s \"))
+
 (defn clear-connections [con db-name]
+  ;; Use parameterized query for datname comparison
   (jdbc/execute-one!
     con
-    [(str "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='" db-name "';")]))
+    ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ?" db-name])))
 
 (defn ->timestamp [date] (when date (java.sql.Timestamp. (.getTime date))))
 
