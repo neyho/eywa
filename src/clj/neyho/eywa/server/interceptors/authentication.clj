@@ -30,13 +30,14 @@
                                   (iam/unsign-data token)
                                   (catch Throwable _ nil)))]
     (when (some? sub)
-      (let [{:keys [groups roles] :as user}
+      (let [{:keys [groups roles rls] :as user}
             (get-resource-owner (or
                                  (when sub-uuid (java.util.UUID/fromString sub-uuid))
                                  sub))]
         #:eywa {:user (select-keys user [:_eid :euuid :name :active])
                 :roles roles
-                :groups groups}))))
+                :groups groups
+                :rls rls}))))
 
 (def authenticate
   {:name :authenticate
@@ -64,7 +65,10 @@
          (let [public (:euuid *PUBLIC_ROLE*)
                public-user #:eywa {:user (select-keys *PUBLIC_USER* [:_eid :euuid :name :active])
                                    :roles #{public}
-                                   :groups #{}}]
+                                   :groups #{}
+                                   :rls {:user (:_eid *PUBLIC_USER*)
+                                         :groups #{}
+                                         :roles #{}}}]
            (merge ctx public-user))
          ;;
          :else

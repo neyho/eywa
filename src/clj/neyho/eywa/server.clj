@@ -12,7 +12,7 @@
     [io.pedestal.http.cors :as cors]
     [io.pedestal.http.ring-middlewares :as middlewares]
     [io.pedestal.http.route :as route]
-    [neyho.eywa.iam.access.context :refer [*user* *roles* *groups*]]
+    [neyho.eywa.iam.access.context :refer [*user* *roles* *groups* *rls*]]
     [neyho.eywa.iam.oidc :as oidc]
     neyho.eywa.lacinia
     [neyho.eywa.server.interceptors :refer [make-info-interceptor json-response-interceptor make-spa-interceptor]]
@@ -46,11 +46,12 @@
 (def graphql-routes
   (let [_schema (fn [] (deref neyho.eywa.lacinia/compiled))
         options {:api-path "/graphql"}
-        wrapped-query-executor {:enter (fn [{:eywa/keys [user roles groups]
+        wrapped-query-executor {:enter (fn [{:eywa/keys [user roles groups rls]
                                              :as ctx}]
                                          (binding [*user* user
                                                    *roles* roles
-                                                   *groups* groups]
+                                                   *groups* groups
+                                                   *rls* rls]
                                            ((:enter lp/query-executor-handler) ctx)))}
         interceptors [authenticate
                       lp/initialize-tracing-interceptor

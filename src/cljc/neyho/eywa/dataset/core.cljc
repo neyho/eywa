@@ -1248,17 +1248,151 @@
     (= euuid (:role iam-uuids)) :role
     :else nil))
 
+(defn- discover-ref-paths
+  "Discover ref attributes (type user/group/role) as direct paths to IAM entities.
+   Returns vector of ref paths with :type :ref"
+  [entity iam-uuids start-idx]
+  (let [ref-types #{"user" "group" "role"}
+        attributes (or (:attributes entity) [])]
+    (->> attributes
+         (filter (fn [attr]
+                   (and (:active attr)
+                        (contains? ref-types (:type attr)))))
+         (map-indexed
+           (fn [idx attr]
+             (let [attr-type (:type attr)
+                   target (keyword attr-type)  ;; "user" -> :user
+                   target-euuid (get iam-uuids target)]
+               {:id (get-path-label (+ start-idx idx))
+                :type :ref
+                :target target
+                :target-name (case target
+                               :user "User"
+                               :group "UserGroup"
+                               :role "UserRole")
+                :target-euuid target-euuid
+                :attribute-euuid (:euuid attr)
+                :attribute-name (:name attr)
+                :depth 0})))
+         vec)))
+
+
+(defn- discover-relation-paths
+  "Discover relation paths to IAM entities using BFS.
+   Returns vector of paths with :type :relation or :type :hybrid.
+
+   :relation - path ends at an IAM entity via relation
+   :hybrid - path traverses relations then ends at a ref attribute (user/group/role type)"
+  [model entity iam-uuids max-depth start-idx]
+  (let [entity-euuid (:euuid entity)
+        iam-entity-uuids (set (vals iam-uuids))]
+    (loop [queue [{:entity entity
+                   :steps []
+                   :visited #{entity-euuid}}]
+           paths []
+           path-idx start-idx]
+      (if (empty? queue)
+        paths
+        (let [{:keys [entity steps visited]} (first queue)
+              remaining (rest queue)
+              current-depth (count steps)]
+          (if (>= current-depth max-depth)
+            ;; Max depth reached, continue with remaining queue
+            (recur remaining paths path-idx)
+            ;; Explore relations from current entity
+            (let [relations (focus-entity-relations model entity)
+                  ;; Process each relation
+                  new-items
+                  (reduce
+                    (fn [acc relation]
+                      (let [target-entity (:to relation)
+                            target-euuid (:euuid target-entity)
+                            relation-label (or (:to-label relation) (:from-label relation) "")]
+                        (if (contains? visited target-euuid)
+                          acc ;; Skip already visited
+                          (let [new-step {:relation-euuid (:euuid relation)
+                                          :label relation-label
+                                          :entity-euuid target-euuid
+                                          :entity-name (:name target-entity)}
+                                new-steps (conj steps new-step)
+                                new-visited (conj visited target-euuid)]
+                            (if (contains? iam-entity-uuids target-euuid)
+                              ;; Found IAM entity via relation - add :relation path
+                              (update acc :paths conj
+                                      {:id (get-path-label (+ path-idx (count (:paths acc))))
+                                       :type :relation
+                                       :target (iam-entity-type target-euuid iam-uuids)
+                                       :target-name (:name target-entity)
+                                       :target-euuid target-euuid
+                                       :steps new-steps
+                                       :depth (count new-steps)})
+                              ;; Not IAM - check for ref attributes AND continue BFS
+                              (let [;; Find ref attributes on target entity that point to IAM
+                                    ref-types #{"user" "group" "role"}
+                                    target-refs (->> (:attributes target-entity)
+                                                     (filter #(and (:active %)
+                                                                   (contains? ref-types (:type %)))))
+                                    ;; Create hybrid paths for each ref attribute
+                                    hybrid-paths (map-indexed
+                                                   (fn [idx attr]
+                                                     (let [attr-target (keyword (:type attr))]
+                                                       {:id (get-path-label (+ path-idx (count (:paths acc)) idx))
+                                                        :type :hybrid
+                                                        :target attr-target
+                                                        :target-name (case attr-target
+                                                                       :user "User"
+                                                                       :group "UserGroup"
+                                                                       :role "UserRole")
+                                                        :target-euuid (get iam-uuids attr-target)
+                                                        :steps new-steps
+                                                        :attribute-euuid (:euuid attr)
+                                                        :attribute-name (:name attr)
+                                                        :depth (count new-steps)}))
+                                                   target-refs)]
+                                (-> acc
+                                    ;; Add hybrid paths
+                                    (update :paths into hybrid-paths)
+                                    ;; Continue BFS for relations
+                                    (update :queue conj
+                                            {:entity target-entity
+                                             :steps new-steps
+                                             :visited new-visited}))))))))
+                    {:paths []
+                     :queue []}
+                    relations)]
+              (recur (into (vec remaining) (:queue new-items))
+                     (into paths (:paths new-items))
+                     (+ path-idx (count (:paths new-items)))))))))))
+
+
 (defn discover-paths-to-iam
-  "Performs BFS from entity to find all paths to IAM entities (User, UserGroup, UserRole).
+  "Discovers all paths from entity to IAM entities (User, UserGroup, UserRole).
+   Finds:
+   - Ref attributes (type user/group/role) as direct paths (:type :ref)
+   - Relation paths via BFS traversal (:type :relation)
+   - Hybrid paths: relations ending at a ref attribute (:type :hybrid)
 
    Arguments:
    - model: The ERD model
    - entity: The source entity to start from
    - iam-uuids: Map with :user, :group, :role keys containing entity UUIDs
-   - max-depth: Maximum number of hops (default 3)
+   - max-depth: Maximum number of hops for relation paths (default 3)
 
-   Returns a vector of paths, each path containing:
+   Returns a vector of paths:
+
+   Ref path (direct attribute on entity):
    {:id \"A\"
+    :type :ref
+    :target :user | :group | :role
+    :target-name \"User\" | \"UserGroup\" | \"UserRole\"
+    :target-euuid #uuid \"...\"
+    :attribute-euuid #uuid \"...\"
+    :attribute-name \"created_by\"
+    :depth 0}
+
+   Relation path (ends at IAM entity via relation):
+   {:id \"B\"
+    :type :relation
     :target :user | :group | :role
     :target-name \"User\" | \"UserGroup\" | \"UserRole\"
     :target-euuid #uuid \"...\"
@@ -1266,63 +1400,32 @@
              :label \"assigned_to\"
              :entity-euuid #uuid \"...\"
              :entity-name \"Entity\"}]
+    :depth 1}
+
+   Hybrid path (relations then ref attribute):
+   {:id \"C\"
+    :type :hybrid
+    :target :user | :group | :role
+    :target-name \"User\" | \"UserGroup\" | \"UserRole\"
+    :target-euuid #uuid \"...\"
+    :steps [{:relation-euuid #uuid \"...\"
+             :label \"task\"
+             :entity-euuid #uuid \"...\"
+             :entity-name \"Task\"}]
+    :attribute-euuid #uuid \"...\"
+    :attribute-name \"created_by\"
     :depth 1}"
   ([model entity iam-uuids]
    (discover-paths-to-iam model entity iam-uuids 3))
   ([model entity iam-uuids max-depth]
    (when (and model entity)
-     (let [entity-euuid (:euuid entity)
-           iam-entity-uuids (set (vals iam-uuids))]
-       (loop [queue [{:entity entity
-                      :steps []
-                      :visited #{entity-euuid}}]
-              paths []
-              path-idx 0]
-         (if (empty? queue)
-           paths
-           (let [{:keys [entity steps visited]} (first queue)
-                 remaining (rest queue)
-                 current-depth (count steps)]
-             (if (>= current-depth max-depth)
-               ;; Max depth reached, continue with remaining queue
-               (recur remaining paths path-idx)
-               ;; Explore relations from current entity
-               (let [relations (focus-entity-relations model entity)
-                     ;; Process each relation
-                     new-items
-                     (reduce
-                      (fn [acc relation]
-                        (let [target-entity (:to relation)
-                              target-euuid (:euuid target-entity)
-                              relation-label (or (:to-label relation) (:from-label relation) "")]
-                          (if (contains? visited target-euuid)
-                            acc ;; Skip already visited
-                            (let [new-step {:relation-euuid (:euuid relation)
-                                            :label relation-label
-                                            :entity-euuid target-euuid
-                                            :entity-name (:name target-entity)}
-                                  new-steps (conj steps new-step)
-                                  new-visited (conj visited target-euuid)]
-                              (if (contains? iam-entity-uuids target-euuid)
-                                ;; Found IAM entity - add to paths
-                                (update acc :paths conj
-                                        {:id (get-path-label (+ path-idx (count (:paths acc))))
-                                         :target (iam-entity-type target-euuid iam-uuids)
-                                         :target-name (:name target-entity)
-                                         :target-euuid target-euuid
-                                         :steps new-steps
-                                         :depth (count new-steps)})
-                                ;; Not IAM - add to queue for further exploration
-                                (update acc :queue conj
-                                        {:entity target-entity
-                                         :steps new-steps
-                                         :visited new-visited}))))))
-                      {:paths []
-                       :queue []}
-                      relations)]
-                 (recur (into (vec remaining) (:queue new-items))
-                        (into paths (:paths new-items))
-                        (+ path-idx (count (:paths new-items)))))))))))))
+     ;; First discover ref paths (direct attributes)
+     (let [ref-paths (discover-ref-paths entity iam-uuids 0)
+           ref-count (count ref-paths)
+           ;; Then discover relation paths (BFS)
+           relation-paths (discover-relation-paths model entity iam-uuids max-depth ref-count)]
+       ;; Combine: refs first (depth 0), then relations (depth 1+)
+       (into ref-paths relation-paths)))))
 
 
 ;; RLS Configuration Helpers
@@ -1391,28 +1494,75 @@
         (assoc-in entity [:configuration :rls :guards guard-idx :operation] new-ops))
       entity)))
 
+(defn- path->condition
+  "Convert a discovered path to a minimal condition for storage.
+   Only stores UUIDs - no names that can go stale.
+
+   Stored structure:
+   - :ref      {:type :ref :attribute <uuid>}
+   - :relation {:type :relation :steps [{:relation <uuid> :entity <uuid>}]}
+   - :hybrid   {:type :hybrid :steps [{:relation <uuid> :entity <uuid>}] :attribute <uuid>}"
+  [path]
+  (case (:type path)
+    :ref
+    {:type :ref
+     :attribute (:attribute-euuid path)}
+
+    :relation
+    {:type :relation
+     :steps (mapv #(select-keys % [:relation-euuid :entity-euuid])
+                  (:steps path))}
+
+    :hybrid
+    {:type :hybrid
+     :steps (mapv #(select-keys % [:relation-euuid :entity-euuid])
+                  (:steps path))
+     :attribute (:attribute-euuid path)}))
+
+
+(defn condition-matches-path?
+  "Check if a stored condition matches a discovered path by comparing UUIDs.
+   This is stable across model changes that don't affect the actual path structure."
+  [condition path]
+  (case (:type condition)
+    :ref
+    (= (:attribute condition) (:attribute-euuid path))
+
+    :relation
+    (let [condition-steps (mapv :relation-euuid (:steps condition))
+          path-steps (mapv :relation-euuid (:steps path))]
+      (= condition-steps path-steps))
+
+    :hybrid
+    (and (= (:attribute condition) (:attribute-euuid path))
+         (let [condition-steps (mapv :relation-euuid (:steps condition))
+               path-steps (mapv :relation-euuid (:steps path))]
+           (= condition-steps path-steps)))
+
+    ;; Legacy: fallback to path-id for old configs
+    (= (:path-id condition) (:id path))))
+
+
 (defn toggle-rls-condition
-  "Toggle a path condition on a guard. If guard doesn't exist, creates a new one."
+  "Toggle a path condition on a guard. If guard doesn't exist, creates a new one.
+   Auto-removes guard if all conditions are removed.
+   Matches conditions by structure (UUIDs), not ephemeral path-id."
   [entity guard-id path]
   (let [guards (get-rls-guards entity)
-        guard-idx (find-guard-index guards guard-id)
-        path-id (:id path)]
+        guard-idx (find-guard-index guards guard-id)]
     (if guard-idx
       ;; Toggle condition on existing guard
       (let [conditions (get-in guards [guard-idx :conditions] [])
-            condition-paths (set (map :path-id conditions))
-            new-conditions (if (contains? condition-paths path-id)
-                             (vec (remove #(= (:path-id %) path-id) conditions))
-                             (conj conditions {:path-id path-id
-                                               :target (:target path)
-                                               :target-euuid (:target-euuid path)
-                                               :steps (:steps path)}))]
-        (assoc-in entity [:configuration :rls :guards guard-idx :conditions] new-conditions))
+            matching-condition (some #(when (condition-matches-path? % path) %) conditions)
+            new-conditions (if matching-condition
+                             (vec (remove #(condition-matches-path? % path) conditions))
+                             (conj conditions (path->condition path)))]
+        ;; Auto-remove guard if no conditions left
+        (if (empty? new-conditions)
+          (remove-rls-guard entity guard-id)
+          (assoc-in entity [:configuration :rls :guards guard-idx :conditions] new-conditions)))
       ;; Guard not found - create new guard with this condition
       (let [new-guard {:id (generate-uuid)
                        :operation #{}
-                       :conditions [{:path-id path-id
-                                     :target (:target path)
-                                     :target-euuid (:target-euuid path)
-                                     :steps (:steps path)}]}]
+                       :conditions [(path->condition path)]}]
         (add-rls-guard entity new-guard)))))

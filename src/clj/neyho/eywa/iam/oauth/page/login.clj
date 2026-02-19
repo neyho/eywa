@@ -2,9 +2,9 @@
   {:shadow.css/include
    ["neyho/eywa/iam/oauth/page/common.css"]}
   (:require
+    [hiccup2.core :refer [html]]
     [neyho.eywa.iam.oauth.authorization-code :as ac]
     [neyho.eywa.iam.oauth.device-code :as dc]
-    [hiccup2.core :refer [html]]
     [shadow.css :refer [css]]))
 
 
@@ -63,7 +63,7 @@
 
 
 (def $input
-  (css 
+  (css
     :pl-10 :pr-2 :w-full :h-10
     {:transition "border-color .3s ease-in-out"
      :color "black"
@@ -87,12 +87,13 @@
 (def $logo
   (css
     :w-full
-    :flex 
+    :flex
     :items-center
     :pl-2
     {:max-width "370px"
      :max-height "5rem"}
-    ["& img" :rounded-md {:width "56px" :height "56px"}]
+    ["& img" :rounded-md {:width "56px"
+                          :height "56px"}]
     ["& .name" :pt-3 :ml-2 :font-medium]))
 
 
@@ -126,20 +127,28 @@
      (html
        [:head
         [:meta {:charset "UTF-8"}]
-        [:meta {:name "viewport" :content "width=device-width, initial-scale=1.0"}]
+        [:meta {:name "viewport"
+                :content "width=device-width, initial-scale=1.0"}]
         [:title "EYWA Login"]
-        [:link {:rel "icon" :href "https://my.eywaonline.com/images/eywa.svg" :crossorigin true}]
-        [:link {:rel "preconnect" :href "https://fonts.googleapis.com"}]
-        [:link {:rel "preconnect" :href "https://fonts.gstatic.com" :crossorigin true}]
-        [:link {:rel "stylesheet" :href "https://fonts.googleapis.com/css2?family=Montserrat:wght@200;300;400;500;600;800;900&family=Roboto&display=swap"}]
-        [:link {:rel "stylesheet" :href "../css/login.css"}]]
+        [:link {:rel "icon"
+                :href "https://my.eywaonline.com/images/eywa.svg"
+                :crossorigin true}]
+        [:link {:rel "preconnect"
+                :href "https://fonts.googleapis.com"}]
+        [:link {:rel "preconnect"
+                :href "https://fonts.gstatic.com"
+                :crossorigin true}]
+        [:link {:rel "stylesheet"
+                :href "https://fonts.googleapis.com/css2?family=Caveat+Brush&family=Inter:wght@100..900&family=Montserrat:ital,wght@0,100..900;1,100..900&family=Nunito:ital,wght@0,200..1000;1,200..1000&family=Raleway:ital,wght@0,100..900;1,100..900&display=swap"}]
+        [:link {:rel "stylesheet"
+                :href "../css/login.css"}]]
        [:body
         {:style {:background-color "#ededed"}}
         #_[:svg
-         {:id "background-viewbox"
-          :viewBox "0 0 1000 1000"
-          :style {:width "100%"
-                  :height "100%"}}]
+           {:id "background-viewbox"
+            :viewBox "0 0 1000 1000"
+            :style {:width "100%"
+                    :height "100%"}}]
         [:div {:class $login-wrapper}
          ; [:div
          ;  {:class $login-greeting}

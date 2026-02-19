@@ -19,7 +19,9 @@
    [neyho.eywa.iam.access :as access]
    [neyho.eywa.iam.access.context
     :refer [*roles*
-            *user*]]
+            *user*
+            *rls*]]
+   [neyho.eywa.dataset.rls :as rls]
    [neyho.eywa.dataset.enhance :as enhance]
    neyho.eywa.dataset.sql.naming
    [neyho.eywa.db :refer [*db*] :as db]
@@ -480,8 +482,46 @@
           data)
          (transform-object current entity data))))))
 
+
+(declare search-entity)
+
+(defn- check-rls-write-access
+  "Check RLS write access for all entities in the result.
+   Throws if any existing record is not accessible for write."
+  [result]
+  (when (rls/should-apply-guards?)
+    (doseq [[table entity-id] (:entity/mapping result)]
+      (let [schema (deployed-schema-entity entity-id)]
+        (when-let [{:keys [enabled]} (:rls schema)]
+          (when enabled
+            (let [records (get-in result [:entity table])
+                  euuids (->> records vals (keep :euuid) vec)]
+              (when (seq euuids)
+                ;; Find which euuids exist in DB (bypass RLS)
+                (let [existing (binding [*rls* nil]
+                                 (search-entity entity-id
+                                                {:euuid {:_in euuids}}
+                                                {:euuid nil}))
+                      existing-set (set (map :euuid existing))]
+                  ;; Of those that exist, check which user can write
+                  (when (seq existing-set)
+                    (let [accessible (binding [rls/*operation* :write]
+                                       (search-entity entity-id
+                                                      {:euuid {:_in (vec existing-set)}}
+                                                      {:euuid nil}))
+                          accessible-set (set (map :euuid accessible))
+                          denied (clojure.set/difference existing-set accessible-set)]
+                      (when (seq denied)
+                        (throw (ex-info "Write access denied by RLS"
+                                        {:entity entity-id
+                                         :table table
+                                         :denied denied}))))))))))))))
+
 (defn enhance-write
   [tx result]
+  ;; Check RLS write access first
+  (check-rls-write-access result)
+  ;; Then apply any entity-specific enhancements
   (let [final (reduce-kv
                (fn [final _ entity-id]
                  (binding [*operation-rules* #{:write}]
@@ -540,7 +580,7 @@
           query)
          (let [data (postgres/execute!
                      tx (into [query] values')
-                     core/*return-type*)
+                     *return-type*)
                data' (reduce
                       (fn [r d]
                         (assoc r (dissoc d :_eid) (:_eid d)))
@@ -1099,7 +1139,7 @@
                   (keys field->type))
         decoders (reduce
                   (fn [r k]
-                    (letfn [(shallow-keywords [data]
+                    (letfn [#_(shallow-keywords [data]
                               (reduce
                                (fn [r [k v]]
                                  (assoc r (keyword k) v))
@@ -1130,7 +1170,8 @@
           modifier :audit/who
           modified-on :audit/when
           _agg :_agg
-          table :table} (deployed-schema-entity entity-id)
+          table :table
+          rls :rls} (deployed-schema-entity entity-id)
          selection (flatten-selection selection)
          ;;
          {fields :field
@@ -1344,7 +1385,7 @@
                             :entity/as (str (gensym "data_"))
                             :entity/table table
                             :fields scalars
-                            :counted? (boolean (contains? selection :count))
+                            :counted? (contains? selection :count)
                             :aggregate (reduce
                                         (fn [r {k :key}]
                                           (let [[{:keys [args selections]}] (get selection k)
@@ -1359,7 +1400,8 @@
                             :decoders decoders
                             :encoders encoders
                             :relations narrow-relations
-                            :recursions recursions) schema
+                            :recursions recursions
+                            :rls rls) schema
                        ;; Handle aggregates
                        (if-not (some #(contains? selection %) aggregate-keys)
                          schema
@@ -2463,7 +2505,7 @@
                   []
                   (get
                    found-records
-                   (keyword ((get-in postgres/defaults [core/*return-type* :label-fn]) (:entity/as schema)))
+                   (keyword ((get-in postgres/defaults [*return-type* :label-fn]) (:entity/as schema)))
                    (keys (get db table)))))]
       final)))
 
@@ -2596,7 +2638,7 @@
                           query (pprint data))
                          (postgres/execute!
                           connection (into [query] data)
-                          core/*return-type*)))]
+                          *return-type*)))]
      ;; when there are some results
      (if (not-empty r)
        ;; get table keys
@@ -2661,22 +2703,17 @@
   ([entity-id args selection]
    (with-open [connection (jdbc/get-connection (:datasource *db*))]
      (let [schema (selection->schema entity-id selection args)
-           enforced-schema (as-> nil schema
-                             (binding [*operation-rules* #{:owns}]
-                               (selection->schema entity-id selection args))
-                             (binding [*operation-rules* #{:delete}]
-                               (selection->schema entity-id selection args)))]
-       ; (log/info
-       ;   :entity entity-id
-       ;   :args args
-       ;   :selection selection
-       ;   :schema schema)
-       (if (and
-            (not= enforced-schema schema)
-            (not (access/superuser?)))
+           owns-schema (binding [*operation-rules* #{:owns}]
+                         (selection->schema entity-id selection args))
+           delete-schema (binding [*operation-rules* #{:delete}]
+                           (selection->schema entity-id selection args))
+           has-permission (or (= owns-schema schema)
+                              (= delete-schema schema)
+                              (access/superuser?))]
+       (if-not has-permission
          (throw
           (ex-info
-           "Purge not allowed. User doesn't own all entites included in purge"
+           "Purge not allowed. User doesn't own or have delete permission for entities"
            {:type ::enforce-purge
             :roles *roles*}))
          (binding [*operation-rules* #{:purge :delete}]
@@ -3088,12 +3125,41 @@
               (aggregate-entity entity-id {:_eid {:_in rows}} selection)
               (aggregate-entity entity-id nil selection))))))))
 
+(defn- check-rls-delete-access
+  "Check RLS delete access for the record being deleted.
+   Throws if record exists but user cannot delete it."
+  [entity-id args]
+  (when (and (rls/should-apply-guards?) (seq args))
+    (let [schema (deployed-schema-entity entity-id)]
+      (when-let [{:keys [enabled]} (:rls schema)]
+        (when enabled
+          ;; Transform delete args {:key val} to search args {:key {:_eq val}}
+          (let [search-args (reduce-kv (fn [m k v] (assoc m k {:_eq v})) {} args)
+                ;; Check if record exists (bypass RLS)
+                existing (binding [*rls* nil]
+                           (search-entity entity-id search-args {:euuid nil}))
+                existing-euuids (set (map :euuid existing))]
+            (when (seq existing-euuids)
+              ;; Check if user can delete these records
+              (let [accessible (binding [rls/*operation* :delete]
+                                 (search-entity entity-id
+                                                {:euuid {:_in (vec existing-euuids)}}
+                                                {:euuid nil}))
+                    accessible-set (set (map :euuid accessible))
+                    denied (clojure.set/difference existing-euuids accessible-set)]
+                (when (seq denied)
+                  (throw (ex-info "Delete access denied by RLS"
+                                  {:entity entity-id
+                                   :denied denied})))))))))))
+
 (defn delete-entity
   ([entity-id args]
    (with-open [connection (jdbc/get-connection (:datasource *db*))]
      (delete-entity connection entity-id args)))
   ([connection entity-id args]
    (binding [*operation-rules* #{:delete}]
+     ;; Check RLS delete access first
+     (check-rls-delete-access entity-id args)
      (let [{:keys [entity/table]} (selection->schema entity-id nil nil)]
        (enhance/apply-delete entity-id args nil)
        (boolean

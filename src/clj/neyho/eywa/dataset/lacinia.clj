@@ -97,6 +97,9 @@
 (defn entity->agg-object [{n :name}]
   (csk/->PascalCaseKeyword (str n " aggregate")))
 
+(defn entity->search-agg-object [{n :name}]
+  (csk/->PascalCaseKeyword (str n " search aggregate")))
+
 (defn entity->agg-part-object [{n :name}]
   (csk/->PascalCaseKeyword (str n " agg")))
 
@@ -374,7 +377,7 @@
                                    ;   :_sum {:type (entity->numeric-object entity)})
                                    ;;
                                          (some has-numerics? (map :to to-relations))
-                                         (assoc :_agg {:type (entity->agg-object entity)}))))})
+                                         (assoc :_agg {:type (entity->search-agg-object entity)}))))})
                   ;;
                       (some has-numerics? (map :to to-relations))
                       (as-> objects
@@ -456,7 +459,21 @@
                                                    (repeat {:type 'Float}))})))
                                {:count {:type 'Int}}
                                (numerics? entity))
-                             to-relations))}))))))
+                             to-relations))})
+                  ;; Search-specific aggregate object (relations only, no direct field aggregates)
+                  ;; Used for _agg on search results - aggregating related entities, not self
+                      (some has-numerics? (map :to to-relations))
+                      (assoc (entity->search-agg-object entity)
+                        {:fields
+                         (reduce
+                           (fn [fields {:keys [to to-label]}]
+                             (if (not-empty to-label)
+                               (assoc fields (attribute->gql-field to-label)
+                                      {:type (entity->agg-object to)
+                                       :args {:_where {:type (entity->search-operator to)}}})
+                               fields))
+                           nil
+                           to-relations)}))))))
         {:Currency
          {:fields
           {:currency {:type :currency_enum

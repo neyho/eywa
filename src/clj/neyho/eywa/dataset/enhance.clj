@@ -5,11 +5,12 @@
   before they are executed. This allows for transparent enforcement of complex
   access patterns like folder-based file permissions."
   (:require
-   [clojure.tools.logging :as log]
-   [neyho.eywa.db :refer [*db*]]
-   [neyho.eywa.iam.access :as access]
-   [neyho.eywa.iam.access.context :refer [*user* *roles* *groups*]]
-   [neyho.eywa.dataset :as dataset]))
+    [clojure.tools.logging :as log]
+    [neyho.eywa.dataset :as dataset]
+    [neyho.eywa.dataset.rls :as rls]
+    [neyho.eywa.db :refer [*db*]]
+    [neyho.eywa.iam.access :as access]
+    [neyho.eywa.iam.access.context :refer [*user* *roles* *groups*]]))
 
 ;; ============================================================================
 ;; Core Enhancement Protocol
@@ -50,7 +51,8 @@
    
    Returns:
      Enhanced schema with injected args"
-  (fn [db {entity-id :entity :as schema} [stack data]]
+  (fn [db {entity-id :entity
+           :as schema} [stack data]]
     [(class db) entity-id])
   :default ::default)
 
@@ -63,7 +65,7 @@
 
 (defmethod args ::default
   [_ schema current-stack]
-  current-stack)
+  (rls/enhance-args schema current-stack rls/*operation*))
 
 (defn explain-enhancement
   "Returns a human-readable explanation of what enhancements were applied.
@@ -180,7 +182,7 @@
 
 (defmethod write ::default
   [_ _ data _]
-  ;; Default allows all mutations (relies on entity-level access)
+  ;; Default allows all mutations - RLS check happens in query/enhance-write
   data)
 
 (defn apply-write

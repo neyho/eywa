@@ -5,7 +5,7 @@
      :refer [get-token-context]]
     [io.pedestal.interceptor :refer [interceptor]]
     [neyho.eywa.lacinia :as lacinia]
-    [neyho.eywa.iam.access.context :refer [*user* *groups* *roles*]]
+    [neyho.eywa.iam.access.context :refer [*user* *groups* *roles* *rls*]]
     [io.pedestal.interceptor.chain :as chain]
     [com.walmartlabs.lacinia.validator :as validator]
     [com.walmartlabs.lacinia.internal-utils :refer [to-message]]
@@ -60,10 +60,11 @@
                            :error (:error subscriptions/execute-operation-interceptor)
                            :enter
                            (fn [{:as ctx
-                                 :keys [eywa/user eywa/groups eywa/roles]}]
+                                 :keys [eywa/user eywa/groups eywa/roles eywa/rls]}]
                              (binding [*user* user
                                        *groups* groups
-                                       *roles* roles]
+                                       *roles* roles
+                                       *rls* rls]
                                ((:enter subscriptions/execute-operation-interceptor) ctx)))})]
     [subscriptions/exception-handler-interceptor
      subscriptions/send-operation-response-interceptor

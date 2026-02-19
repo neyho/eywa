@@ -203,6 +203,14 @@
      :model nil
      :name nil}))
 
+
+(comment
+  (def tasks-model
+    (get-version #uuid "3784fe05-b50b-45ba-bf7e-1b2e197f0553"))
+  (def iam-model
+    (get-version #uuid "dd556c58-0c54-4af3-9340-ac37d2968474"))
+  (deploy! iam-model))
+
 (defn get-version-model
   [euuid]
   (:model (get-version euuid)))

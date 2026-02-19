@@ -7,12 +7,12 @@
     [io.pedestal.interceptor :refer [interceptor]]
     [io.pedestal.http.jetty.websockets :as ws]
     [neyho.eywa.lacinia :as lacinia]
-    [neyho.eywa.iam.access.context :refer [*user* *groups* *roles*]]
+    [neyho.eywa.iam.access.context :refer [*user* *groups* *roles* *rls*]]
     [com.walmartlabs.lacinia.pedestal.subscriptions :as subscriptions]))
 
 
 (defn make-listener
-  [{:keys [eywa/user eywa/groups eywa/roles]}]
+  [{:keys [eywa/user eywa/groups eywa/roles eywa/rls]}]
   (let [wrapped-execute (interceptor
                           {:name (:name subscriptions/execute-operation-interceptor)
                            :leave (:leave subscriptions/execute-operation-interceptor)
@@ -20,7 +20,8 @@
                            :enter (fn [ctx]
                                     (binding [*user* user
                                               *groups* groups
-                                              *roles* roles]
+                                              *roles* roles
+                                              *rls* rls]
                                       ((:enter subscriptions/execute-operation-interceptor) ctx)))})
         interceptors [subscriptions/exception-handler-interceptor
                       subscriptions/send-operation-response-interceptor

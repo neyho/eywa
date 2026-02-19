@@ -202,8 +202,14 @@
                        :phone_number nil
                        :phone_number_verified nil
                        :address nil}}]
-       :groups [{:selections {:euuid nil}}]
-       :roles [{:selections {:euuid nil}}]})
+       :groups [{:selections {:_eid nil
+                              :euuid nil}}]
+       :roles [{:selections {:_eid nil
+                             :euuid nil}}]})
+    (as-> user
+          (assoc user :rls {:user (:_eid user)
+                            :groups (set (map :_eid (:groups user)))
+                            :roles (set (map :_eid (:roles user)))}))
     (update :roles #(set (map :euuid %)))
     (update :groups #(set (map :euuid %)))))
 
