@@ -36,7 +36,7 @@
   ;; Use parameterized query for datname comparison
   (jdbc/execute-one!
     con
-    ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ?" db-name])))
+    ["SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ?" db-name]))
 
 (defn ->timestamp [date] (when date (java.sql.Timestamp. (.getTime date))))
 

@@ -303,28 +303,13 @@
   [ctx {:keys [euuid]
         :as args} v]
   (when (some? euuid)
-    (when-let [dataset (db/get-entity
-                         *db*
-                         du/dataset
-                         {:euuid euuid}
-                         {:name nil
-                          :euuid nil
-                          :versions [{:args {:_order_by [{:modified_on :asc}]
-                                             :_where {:deployed {:_boolean :TRUE}}}
-                                      :selections {:name nil
-                                                   :euuid nil
-                                                   :model nil}}]})]
-      ; (def dataset dataset)
-      ; (def euuid euuid)
-      ; (def ctx ctx)
-      ; (throw (Exception. "HI"))
-      (log/infof "User %s destroying dataset %s" (:name *user*) (:name dataset))
-      (dataset/destroy! *db* dataset)
-      (async/put!
-        subscription
-        {:topic :refreshedGlobalDataset
-         :data {:name "Global"
-                :model (dataset/get-model *db*)}})))
+    (log/infof "User %s destroying dataset %s" (:name *user*) (:name args))
+    (dataset/destroy! *db* args)
+    (async/put!
+      subscription
+      {:topic :refreshedGlobalDataset
+       :data {:name "Global"
+              :model (dataset/get-model *db*)}}))
   [ctx args v])
 
 ;; @hook

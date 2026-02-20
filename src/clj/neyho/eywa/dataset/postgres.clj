@@ -1688,20 +1688,28 @@
           (catch Throwable e
             (log/error e "Couldn't add lacinia schema shard"))))))
   ;;
-  (core/destroy! [this {all-versions :versions
-                        :keys [euuid name]}]
+  (core/destroy! [this {:keys [euuid name]}]
     (assert (or name euuid) "Specify dataset name or euuid!")
     ;; Get all versions for this dataset
-    (when-not (empty? all-versions)
-      (log/infof "Destroying dataset %s: recalling %d versions in reverse order"
-                 (or name (str euuid)) (count all-versions))
+    (let [{all-versions :versions} (dataset/get-entity
+                                     du/dataset
+                                     (if euuid
+                                       {:euuid euuid}
+                                       {:name name})
+                                     {:name nil
+                                      :euuid nil
+                                      :versions [{:args {:_order_by [{:modified_on :asc}]
+                                                         :_where {:deployed {:_boolean :TRUE}}}
+                                                  :selections {:name nil
+                                                               :euuid nil
+                                                               :model nil}}]})]
+      (when (not-empty all-versions)
+        (log/infof "Destroying dataset %s: recalling %d versions in reverse order"
+                   (or name (str euuid)) (count all-versions))
         ;; Recall each version in reverse chronological order (most recent first)
         ;; This ensures proper cleanup and rollback behavior
-      (comment
-        (core/recall! this {:euuid (:euuid (first all-versions))})
-        (core/recall! this {:euuid (:euuid (second all-versions))}))
-      (doseq [version all-versions]
-        (core/recall! this {:euuid (:euuid version)}))))
+        (doseq [version all-versions]
+          (core/recall! this {:euuid (:euuid version)})))))
   (core/get-model
     [_]
     (dataset/deployed-model))
