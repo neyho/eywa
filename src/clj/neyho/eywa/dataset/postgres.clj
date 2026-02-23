@@ -400,7 +400,7 @@
                  (#{"json"} type))
             (conj
               (do
-                (log/debugf "Setting all avatar values to NULL")
+                (log/debug "Setting all avatar values to NULL")
                 (format "update \"%s\" set %s = NULL" old-table column)))
             ;; Type has changed so you better cast to target type
             dt
@@ -1474,13 +1474,9 @@
   (core/deploy! [this {:keys [model]
                        :as version}]
     (try
-      (let [;; Get current global model WITH CLAIMS (or empty if first deployment)
-            ;; MUST use last-deployed-model (not fallback) because we need claims
-            global (or (try
-                         (last-deployed-model)
-                         (catch Throwable _
-                           (log/warn "Cannot query dataset entities during deploy, starting with empty model")
-                           nil))
+      (let [;; Get current global model WITH CLAIMS from in-memory state (or empty if first deployment)
+            ;; Use in-memory model to stay consistent with mount's view of global state
+            global (or (dataset/deployed-model)
                        (core/map->ERDModel {:entities {}
                                             :relations {}}))
 
@@ -1494,12 +1490,12 @@
             version'' (assoc
                         version
                         :model (assoc model :version 1)
-                        ; :entities (core/get-entities model)
-                        ; :relations (map
-                        ;              #(-> %
-                        ;                   (update :from :euuid)
-                        ;                   (update :to :euuid))
-                        ;              (core/get-relations model))
+                        :entities (core/get-entities model)
+                        :relations (map
+                                     #(-> %
+                                          (update :from :euuid)
+                                          (update :to :euuid))
+                                     (core/get-relations model))
                         :deployed true)]
 
         ;; Mark version as deployed in database
@@ -1507,16 +1503,17 @@
         ;; Reload current projection so that you can sync data for new model
         (core/reload this dataset')
 
-        ;; Rebuild global model from ALL deployed versions to compute correct :active flags
-        ;; This ensures entities not in latest versions are marked as inactive
-        (let [updated-model (assoc (rebuild-global-model) :version 1)]
+        ;; Update global model and deploy history
+        ;; During bootstrap: use in-memory model to preserve pre-mounted entities
+        ;; During normal operation: rebuild from DB to compute correct active flags
+        (let [updated-model (assoc (if core/*bootstrapping*
+                                     (core/get-model this)
+                                     (rebuild-global-model))
+                              :version 1)]
           (dataset/save-model updated-model)
           (core/add-to-deploy-history this updated-model)
           ;; Regenerate GraphQL schema with updated active flags
           (try
-            (comment
-              (rebuild-global-model)
-              (def this *db*))
             (lacinia/add-shard ::datasets (fn [] (lacinia/generate-lacinia-schema this)))
             (catch Throwable e
               (log/error e "Couldn't add lacinia schema shard"))))
@@ -1662,7 +1659,7 @@
             ;; Case 1: Only deployed version - delete the dataset itself
           only-version?
           (do
-            (log/infof "Recalled most recent version, rebuilding from remaining versions")
+            (log/info "Recalled most recent version, rebuilding from remaining versions")
             (core/mount this {:model updated-model})
             (log/infof "Deleting version record %s@%s" dataset-name (:name version))
             (delete-entity this du/dataset-version {:euuid euuid})
@@ -1671,7 +1668,7 @@
             ;; Case 2: Most recent version - SIMPLIFIED (no redeploy!)
           is-most-recent?
           (do
-            (log/infof "Recalled most recent version, rebuilding from remaining versions")
+            (log/info "Recalled most recent version, rebuilding from remaining versions")
             (core/mount this {:model updated-model})
             (log/infof "Deleting version record %s@%s" dataset-name (:name version))
             (delete-entity this du/dataset-version {:euuid euuid}))
@@ -1805,10 +1802,10 @@
   (core/setup
     ([this]
      (comment
+       (dataset/deployed-model)
        (def this (postgres/from-env))
        (def db neyho.eywa.db/*db*)
-       (def admin (postgres/admin-from-env))
-       (def db (postgres/create-db admin (:db this))))
+       (def admin (postgres/admin-from-env)))
      (let [admin (postgres/admin-from-env)
            db (postgres/create-db admin (:db this))]
        ; (def admin (postgres/admin-from-env))
@@ -1819,36 +1816,39 @@
        (log/infof "Initializing tables for host\n%s" (pr-str (dissoc db :password)))
        (core/create-deploy-history db)
        (log/info "Created __deploy_history")
-       (as-> (<-transit (slurp (io/resource "dataset/iam.json"))) model
-         (core/mount db model)
-         (core/reload db model))
-       ; (dataset/stack-entity iu/permission iam/permissions)
-       (log/info "Mounted iam.json dataset")
-       (binding [core/*return-type* :edn]
-         (dataset/sync-entity iu/user *EYWA*)
-         (dataset/bind-service-user #'neyho.eywa.data/*EYWA*))
-       (log/info "*EYWA* user created")
-       (binding [*user* (:_eid *EYWA*)]
-         (comment
-           (alter-var-root #'*user* (fn [_] (:_eid *EYWA*))))
-         (as-> (<-transit (slurp (io/resource "dataset/dataset.json"))) model
+       ;; Bootstrap mode: disable claims-based activation
+       ;; This allows pre-mounted entities to stay active during deployment
+       (binding [core/*bootstrapping* true]
+         (as-> (<-transit (slurp (io/resource "dataset/iam.json"))) model
            (core/mount db model)
            (core/reload db model))
-         (log/info "Mounted dataset.json dataset")
-         ; (dataset/stack-entity iu/permission dataset/permissions)
-         ; (dataset/load-role-schema)
-         ;;
-         (log/info "Deploying IAM dataset")
-         (core/deploy! db (<-transit (slurp (io/resource "dataset/iam.json"))))
-         ;;
-         (log/info "Deploying Datasets dataset")
-         (core/deploy! db (<-transit (slurp (io/resource "dataset/dataset.json"))))
-         ;;
-         ; (log/info "Mounted oauth.json dataset")
-         ; (core/deploy! db (<-transit (slurp (io/resource "dataset/oauth.json"))))
-         ;;
-         (log/info "Reloading")
-         (core/reload db)
+         ; (dataset/stack-entity iu/permission iam/permissions)
+         (log/info "Mounted iam.json dataset")
+         (binding [core/*return-type* :edn]
+           (dataset/sync-entity iu/user *EYWA*)
+           (dataset/bind-service-user #'neyho.eywa.data/*EYWA*))
+         (log/info "*EYWA* user created")
+         (binding [*user* (:_eid *EYWA*)]
+           (comment
+             (alter-var-root #'*user* (fn [_] (:_eid *EYWA*))))
+           (as-> (<-transit (slurp (io/resource "dataset/dataset.json"))) model
+             (core/mount db model)
+             (core/reload db model))
+           (log/info "Mounted dataset.json dataset")
+           ; (dataset/stack-entity iu/permission dataset/permissions)
+           ; (dataset/load-role-schema)
+           ;;
+           (log/info "Deploying IAM dataset")
+           (core/deploy! db (<-transit (slurp (io/resource "dataset/iam.json"))))
+           ;;
+           (log/info "Deploying Datasets dataset")
+           (core/deploy! db (<-transit (slurp (io/resource "dataset/dataset.json"))))
+           ;;
+           ; (log/info "Mounted oauth.json dataset")
+           ; (core/deploy! db (<-transit (slurp (io/resource "dataset/oauth.json"))))
+           ;;
+           (log/info "Reloading")
+           (core/reload db))
          (import-app "exports/app_eywa_frontend.json")
          (import-api "exports/api_eywa_graphql.json")
          (doseq [role ["exports/role_dataset_developer.json"
@@ -1876,7 +1876,7 @@
          (core/get-last-deployed this 0))))
     ([_ offset]
      (with-open [connection (jdbc/get-connection (:datasource *db*))]
-       (when-let [m (n/execute-one!
+       (when-let [m (execute-one!
                       connection
                       [(cond->
                          "select model from __deploy_history order by deployed_on desc"
@@ -1893,15 +1893,14 @@
            (with-meta clean-model {:dataset/schema clean-schema}))))))
   (core/create-deploy-history [_]
     (with-open [connection (jdbc/get-connection (:datasource *db*))]
-      (n/execute-one!
+      (execute-one!
         connection
-        [(format
-           "create table __deploy_history (
-           \"deployed_on\" timestamp not null default localtimestamp,
-           \"model\" text)")])))
+        ["create table __deploy_history (
+         \"deployed_on\" timestamp not null default localtimestamp,
+         \"model\" text)"])))
   (core/add-to-deploy-history [_ model]
     (with-open [connection (jdbc/get-connection (:datasource *db*))]
-      (n/execute-one!
+      (execute-one!
         connection
         ["insert into __deploy_history (model) values (?)"
          (->transit model)])))
@@ -2169,8 +2168,8 @@
   (let [system-tables #{"__deks" "__version_history"}]
     (set (remove system-tables
                  (map :table_name
-                      (n/execute! *db*
-                                  ["SELECT table_name FROM information_schema.tables
+                      (execute! *db*
+                                ["SELECT table_name FROM information_schema.tables
                 WHERE table_schema = 'public'
                 AND table_type = 'BASE TABLE'
                 AND table_name NOT LIKE '__deploy%'"]))))))
@@ -2179,17 +2178,17 @@
   "Returns a set of column names for a given table"
   [table-name]
   (set (map (comp keyword :column_name)
-            (n/execute! *db*
-                        ["SELECT column_name FROM information_schema.columns
+            (execute! *db*
+                      ["SELECT column_name FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = ?"
-                         table-name]))))
+                       table-name]))))
 
 (defn get-pg-enum-types
   "Returns a set of all enum type names in the database"
   []
   (set (map :typname
-            (n/execute! *db*
-                        ["SELECT typname FROM pg_type
+            (execute! *db*
+                      ["SELECT typname FROM pg_type
             WHERE typtype = 'e'"]))))
 
 (defn healthcheck-database

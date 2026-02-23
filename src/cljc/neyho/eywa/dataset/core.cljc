@@ -554,18 +554,6 @@
     [this]
     [this options]
     "Remove dataset from given DB target")
-  (backup
-    [this options]
-    "Backups dataset for given target based on provided options")
-  ; (create-db
-  ;   [this]
-  ;   "Creates database instance")
-  ; (drop-db
-  ;   [this]
-  ;   "Drops database instance")
-  ; (backup-db
-  ;   [this options]
-  ;   "Creates database backup")
   (create-deploy-history
     [this]
     "Prepares db/storage for deploy history")
@@ -665,29 +653,71 @@
       same?)
     false))
 
-(defn- merge-entity-attributes
-  "Merges attributes from two entities, accumulating all historical attributes.
-   Attributes in entity2 are marked :active true, attributes only in entity1 are marked :active false.
-   This implements 'last deployed wins' at the entity level for attribute active flags."
+
+(defn- merge-entity-rls
+  "Merge RLS configurations from two entities during model join.
+
+   Merging rules:
+   - Guards: union by :id (all guards kept; if same :id exists in both, entity2 wins)
+   - Enabled: entity2 wins (last deployed)
+
+   This allows multiple datasets to define guards on shared entities,
+   with all guards combined using OR logic at query time."
   [entity1 entity2]
-  (let [attrs1 (or (:attributes entity1) [])
+  (let [rls1 (get-in entity1 [:configuration :rls])
+        rls2 (get-in entity2 [:configuration :rls])
+        guards1 (or (:guards rls1) [])
+        guards2 (or (:guards rls2) [])
+        ;; Index by guard ID for merging
+        guards1-by-id (into {} (map (juxt :id identity) guards1))
+        guards2-by-id (into {} (map (juxt :id identity) guards2))
+        ;; Union all guard IDs
+        all-guard-ids (clojure.set/union (set (keys guards1-by-id))
+                                         (set (keys guards2-by-id)))
+        ;; Merge: entity2 wins for same ID (last deployed wins for operations)
+        merged-guards (vec
+                        (for [guard-id all-guard-ids]
+                          (if-let [g2 (get guards2-by-id guard-id)]
+                            g2  ;; entity2 wins
+                            (get guards1-by-id guard-id))))
+        ;; enabled: entity2 wins (last deployed)
+        enabled (if (some? rls2)
+                  (get rls2 :enabled false)
+                  (get rls1 :enabled false))]
+    {:enabled enabled
+     :guards merged-guards}))
+
+
+(defn- merge-entity-attributes
+  "Merges attributes and RLS config from two entities.
+
+   Attributes: accumulates all historical attributes.
+   - Attributes in entity2 are marked :active true
+   - Attributes only in entity1 are marked :active false
+
+   RLS: unions guards from both entities.
+   - Guards with same ID: entity2 wins (last deployed wins for operations)
+   - Different IDs: both kept (OR logic at query time)
+   - Enabled flag: entity2 wins"
+  [entity1 entity2]
+  (let [;; Merge attributes
+        attrs1 (or (:attributes entity1) [])
         attrs2 (or (:attributes entity2) [])
-        ;; Build maps by attribute UUID for fast lookup
         attrs1-by-id (into {} (map (juxt :euuid identity) attrs1))
         attrs2-by-id (into {} (map (juxt :euuid identity) attrs2))
-        ;; Get all unique attribute UUIDs
         all-attr-uuids (clojure.set/union (set (keys attrs1-by-id))
                                           (set (keys attrs2-by-id)))
-        ;; Merge attributes: model2 wins for properties, but accumulate all
         merged-attrs (vec
                        (for [attr-uuid all-attr-uuids]
                          (if-let [attr2 (get attrs2-by-id attr-uuid)]
-                          ;; Attribute in model2: use it with :active true
                            (assoc attr2 :active true)
-                          ;; Attribute only in model1: keep it with :active false
-                           (assoc (get attrs1-by-id attr-uuid) :active false))))]
-    ;; Return entity2 as base with merged attributes
-    (assoc entity2 :attributes merged-attrs)))
+                           (assoc (get attrs1-by-id attr-uuid) :active false))))
+        ;; Merge RLS config
+        merged-rls (merge-entity-rls entity1 entity2)]
+    ;; Return entity2 as base with merged attributes and RLS
+    (-> entity2
+        (assoc :attributes merged-attrs)
+        (assoc-in [:configuration :rls] merged-rls))))
 
 (defn join-models [model1 model2]
   (->
@@ -734,30 +764,47 @@
         joined-model
         (mapcat get-relations [model1 model2])))))
 
+;; Dynamic var to disable claims-based activation during bootstrap
+;; When true, all entities marked active regardless of claims
+(def ^:dynamic *bootstrapping* false)
 
 (defn activate-model
   [model deployed-versions]
-  (as-> model m
-    (reduce
-      (fn [m entity]
-        (set-entity m (assoc entity :active
-                             (boolean
-                               (not-empty
-                                 (clojure.set/intersection
-                                   (:claimed-by entity)
-                                   deployed-versions))))))
-      m
-      (get-entities m))
-    (reduce
-      (fn [m relation]
-        (set-relation m (assoc relation :active
+  (if *bootstrapping*
+    ;; Bootstrap mode: mark everything as active, skip claims logic
+    (as-> model m
+      (reduce
+        (fn [m entity]
+          (set-entity m (assoc entity :active true)))
+        m
+        (get-entities m))
+      (reduce
+        (fn [m relation]
+          (set-relation m (assoc relation :active true)))
+        m
+        (get-relations m)))
+    ;; Normal mode: activate based on claims intersection with deployed versions
+    (as-> model m
+      (reduce
+        (fn [m entity]
+          (set-entity m (assoc entity :active
                                (boolean
                                  (not-empty
                                    (clojure.set/intersection
-                                     (:claimed-by relation)
+                                     (:claimed-by entity)
                                      deployed-versions))))))
-      m
-      (get-relations m))))
+        m
+        (get-entities m))
+      (reduce
+        (fn [m relation]
+          (set-relation m (assoc relation :active
+                                 (boolean
+                                   (not-empty
+                                     (clojure.set/intersection
+                                       (:claimed-by relation)
+                                       deployed-versions))))))
+        m
+        (get-relations m)))))
 
 (defn disjoin-model [model1 model2]
   (reduce
@@ -1083,6 +1130,8 @@
                         (select-keys that [:name :width :height])))
             cso (get-in this [:configuration :constraints :unique])
             csn (get-in that [:configuration :constraints :unique])
+            rlso (get-in this [:configuration :rls])
+            rlsn (get-in that [:configuration :rls])
             changed-attributes (vec (filter attribute-changed? attributes'))]
         (cond->
           (assoc that :attributes attributes')
@@ -1092,6 +1141,9 @@
           ;;
           (not= cso csn)
           (vary-meta assoc-in [:dataset/projection :diff :configuration :constraints :unique] cso)
+          ;;
+          (not= rlso rlsn)
+          (vary-meta assoc-in [:dataset/projection :diff :configuration :rls] rlso)
           ;;
           (not-empty changed-attributes)
           (vary-meta assoc-in [:dataset/projection :diff :attributes] changed-attributes)))
@@ -1234,9 +1286,17 @@
 (def ^:private path-labels "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 (defn get-path-label
-  "Get letter label for path index (0 -> A, 1 -> B, etc.)"
+  "Get letter label for path index (0 -> A, 25 -> Z, 26 -> AA, 27 -> AB, etc.)"
   [idx]
-  (str (nth path-labels (mod idx 26))))
+  (loop [n idx
+         result ""]
+    (let [remainder (mod n 26)
+          char (nth path-labels remainder)
+          new-result (str char result)
+          quotient (quot n 26)]
+      (if (zero? quotient)
+        new-result
+        (recur (dec quotient) new-result)))))
 
 (defn iam-entity-type
   "Returns the IAM entity type keyword for a given entity UUID.
@@ -1478,8 +1538,8 @@
   "Find the index of a guard by id"
   [guards guard-id]
   (first (keep-indexed
-          (fn [idx g] (when (= (:id g) guard-id) idx))
-          guards)))
+           (fn [idx g] (when (= (:id g) guard-id) idx))
+           guards)))
 
 (defn toggle-rls-operation
   "Toggle a Read/Write operation on a guard"
@@ -1493,6 +1553,7 @@
                       (conj current-ops operation))]
         (assoc-in entity [:configuration :rls :guards guard-idx :operation] new-ops))
       entity)))
+
 
 (defn- path->condition
   "Convert a discovered path to a minimal condition for storage.
@@ -1566,3 +1627,118 @@
                        :operation #{}
                        :conditions [(path->condition path)]}]
         (add-rls-guard entity new-guard)))))
+
+
+;;; RLS Guards - New Modal UI Support Functions
+
+(defn paths->euuid-set
+  "Convert paths to a set of identifying UUIDs for comparison.
+   Used for duplicate detection - two path selections are duplicates
+   if they produce the same euuid set."
+  [paths]
+  (set
+    (map
+      (fn [path]
+        (case (:type path)
+          :ref (:attribute-euuid path)
+          :relation (mapv :relation-euuid (:steps path))
+          :hybrid [(:attribute-euuid path) (mapv :relation-euuid (:steps path))]))
+      paths)))
+
+
+(defn conditions->euuid-set
+  "Convert stored conditions to euuid set for comparison."
+  [conditions]
+  (set
+    (map
+      (fn [condition]
+        (case (:type condition)
+          :ref (:attribute condition)
+          :relation (mapv :relation-euuid (:steps condition))
+          :hybrid [(:attribute condition) (mapv :relation-euuid (:steps condition))]))
+      conditions)))
+
+
+(defn guard-matches-paths?
+  "Check if a guard's conditions match exactly the given paths.
+   Used for duplicate detection when adding/editing guards."
+  [guard paths]
+  (= (conditions->euuid-set (:conditions guard))
+     (paths->euuid-set paths)))
+
+
+(defn validate-guard-paths
+  "Validate guard conditions against current model state.
+   Returns a map with:
+   - :valid - vector of valid conditions
+   - :invalid - vector of invalid conditions (referencing removed entities/relations/attributes)
+
+   A condition is invalid if:
+   - :ref type: attribute no longer exists on entity
+   - :relation type: any relation in the path no longer exists
+   - :hybrid type: any relation or the final attribute no longer exists"
+  [guard model entity]
+  (let [entity-attrs (set (map :euuid (filter :active (:attributes entity))))
+        model-relations (set (map :euuid (filter :active (get-relations model))))]
+    (reduce
+      (fn [acc condition]
+        (let [valid?
+              (case (:type condition)
+                :ref
+                (contains? entity-attrs (:attribute condition))
+
+                :relation
+                (every? #(contains? model-relations (:relation-euuid %))
+                        (:steps condition))
+
+                :hybrid
+                (and
+                  ;; All relations in path exist
+                  (every? #(contains? model-relations (:relation-euuid %))
+                          (:steps condition))
+                  ;; Final entity's attribute exists
+                  ;; Note: We'd need to traverse to check the final entity's attrs
+                  ;; For now, just check relations - attr check requires model traversal
+                  true)
+
+                ;; Unknown type - treat as invalid
+                false)]
+          (update acc (if valid? :valid :invalid) conj condition)))
+      {:valid []
+       :invalid []}
+      (:conditions guard))))
+
+
+(defn paths->conditions
+  "Convert a collection of paths to conditions for storage."
+  [paths]
+  (mapv path->condition paths))
+
+
+(defn add-rls-guard-with-paths
+  "Add a new RLS guard with the given paths and default READ permission.
+   Returns nil if paths would create a duplicate guard."
+  [entity paths]
+  (let [guards (get-rls-guards entity)
+        ;; Check for duplicates
+        duplicate? (some #(guard-matches-paths? % paths) guards)]
+    (when-not duplicate?
+      (let [new-guard {:id (generate-uuid)
+                       :operation #{:read}
+                       :conditions (paths->conditions paths)}]
+        (add-rls-guard entity new-guard)))))
+
+
+(defn update-rls-guard-paths
+  "Update an existing guard's paths (conditions).
+   Returns nil if the new paths would create a duplicate with another guard."
+  [entity guard-id paths]
+  (let [guards (get-rls-guards entity)
+        guard-idx (find-guard-index guards guard-id)
+        ;; Check for duplicates with OTHER guards (not this one)
+        other-guards (remove #(= (:id %) guard-id) guards)
+        duplicate? (some #(guard-matches-paths? % paths) other-guards)]
+    (when (and guard-idx (not duplicate?))
+      (assoc-in entity
+                [:configuration :rls :guards guard-idx :conditions]
+                (paths->conditions paths)))))

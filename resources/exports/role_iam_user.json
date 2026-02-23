@@ -97,9 +97,6 @@
   "from_write_relations": null,
   "read_entities": [
     {
-      "euuid": "6f525f5f-0504-498b-8b92-c353a0f9d141"
-    },
-    {
       "euuid": "b2ccded3-9f8e-49aa-b610-8902ad7330e9"
     },
     {
@@ -128,3 +125,4 @@
   "write_entities": null,
   "from_delete_relations": null
 }
+

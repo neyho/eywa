@@ -113,6 +113,7 @@
                    (core/set-session session {:flow "authorization_code"
                                               :code authorization-code
                                               :client client
+                                              :auth-method :pwd
                                               :last-active now})
                    (core/set-session-audience-scope session audience scope)
                    (core/set-session-resource-owner session resource-owner)
@@ -185,6 +186,7 @@
                      (core/set-session session {:flow "device_code"
                                                 :code device-code
                                                 :client client
+                                                :auth-method :pwd
                                                 :last-active now})
                      (core/set-session-audience-scope session audience scope)
                      (core/set-session-resource-owner session resource-owner)

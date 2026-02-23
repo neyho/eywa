@@ -17,6 +17,7 @@
              get-session-client
              get-session-resource-owner]]
     [neyho.eywa.iam.oauth.device-code :as dc]
+    [neyho.eywa.iam.oauth.introspection :as introspection]
     [neyho.eywa.iam.oauth.login :as login]
     [neyho.eywa.iam.oauth.token
      :refer [get-token-session]]
@@ -134,13 +135,20 @@
            :jwks_uri (domain+ "/oauth/jwks")
            :end_session_endpoint (domain+ "/oauth/logout")
            :revocation_endpoint (domain+ "/oauth/revoke")
+           :introspection_endpoint (domain+ "/oauth/introspect")
            ; :response_types_supported ["code" "token" "id_token"
                                         ;                            "code id_token" "token id_token"
                                         ;                            "code token id_token"]
            :response_types_supported ["urn:ietf:params:oauth:grant-type:device_code"
                                       "code"]
+           :grant_types_supported ["authorization_code"
+                                   "refresh_token"
+                                   "client_credentials"
+                                   "urn:ietf:params:oauth:grant-type:device_code"]
+           :code_challenge_methods_supported ["S256" "plain"]
            :subject_types_supported ["public"]
            :token_endpoint_auth_methods_supported ["client_secret_basic" "client_secret_post"]
+           :id_token_signing_alg_values_supported ["RS256"]
            :scopes_supported ["openid" "profile" "offline_access"
                               "name" "given_name" "family_name" "nickname"
                               "email" "email_verified" "picture"
@@ -174,15 +182,15 @@
 
 (defmethod process-scope "openid"
   [session tokens _]
-  (let [{:keys [name]} (get-session-resource-owner session)
-        {:keys [authorized-at code]} (get-session session)
+  (let [{user-name :name} (get-session-resource-owner session)
+        {:keys [authorized-at code auth-method]} (get-session session)
         {:keys [nonce]} (ac/get-code-request code)
         client (get-session-client session)]
     (update tokens :id_token
             merge
             {:iss (domain+)
              :aud (:id client)
-             :sub name
+             :sub user-name
              :iat (to-timestamp (vura/date))
              :exp (-> (vura/date)
                       vura/date->value
@@ -191,6 +199,7 @@
                       to-timestamp)
              :sid session
              :auth_time authorized-at
+             :amr [(clojure.core/name (or auth-method :pwd))]
              :nonce nonce})))
 
 (defmethod sign-token :id_token
@@ -280,7 +289,8 @@
         nil
         (clojure.string/split cookies #"[;\s]+")))))
 
-(let [user-info (conj core/oauth-common-interceptor user-info-interceptor)]
+(let [user-info (conj core/oauth-common-interceptor user-info-interceptor)
+      introspect (conj core/oauth-common-interceptor introspection/introspection-interceptor)]
   (def routes
     (reduce
       set/union
@@ -289,4 +299,5 @@
        login/routes
        #{["/oauth/jwks" :get [jwks-interceptor] :route-name ::get-jwks]
          ["/oauth/userinfo" :get user-info :route-name ::user-info]
+         ["/oauth/introspect" :post introspect :route-name ::introspect]
          ["/.well-known/openid-configuration" :get [open-id-configuration-interceptor] :route-name ::open-id-configuration]}])))

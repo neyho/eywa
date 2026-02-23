@@ -210,6 +210,7 @@
                       :iss (core/domain+)
                       :sub user-name
                       :iat (-> (vura/date) to-timestamp)
+                      :jti (nano-id/nano-id 20)
                       :client_id client_id
                       :sid session
                       :scope (str/join " " scope)}
@@ -398,6 +399,9 @@
   [{{:keys [grant_type]
      :as oauth-request} :params
     :as request}]
+  (def request request)
+  (def grant_type grant_type)
+  (def oauth-request oauth-request)
   (log/debugf "Received token endpoint request\n%s" (pprint request))
   (binding [core/*domain* (core/original-uri request)]
     (case grant_type
