@@ -659,10 +659,13 @@
 
    Merging rules:
    - Guards: union by :id (all guards kept; if same :id exists in both, entity2 wins)
-   - Enabled: entity2 wins (last deployed)
+   - Enabled: OR logic (if ANY dataset enables RLS, it stays enabled)
 
    This allows multiple datasets to define guards on shared entities,
-   with all guards combined using OR logic at query time."
+   with all guards combined using OR logic at query time.
+
+   Security principle: if any dataset cares about RLS for an entity,
+   it must be enforced - one dataset cannot disable another's security."
   [entity1 entity2]
   (let [rls1 (get-in entity1 [:configuration :rls])
         rls2 (get-in entity2 [:configuration :rls])
@@ -680,10 +683,9 @@
                           (if-let [g2 (get guards2-by-id guard-id)]
                             g2  ;; entity2 wins
                             (get guards1-by-id guard-id))))
-        ;; enabled: entity2 wins (last deployed)
-        enabled (if (some? rls2)
-                  (get rls2 :enabled false)
-                  (get rls1 :enabled false))]
+        ;; enabled: OR logic - if either has it enabled, keep it enabled
+        enabled (or (get rls1 :enabled false)
+                    (get rls2 :enabled false))]
     {:enabled enabled
      :guards merged-guards}))
 
@@ -971,12 +973,31 @@
         (not-empty (dissoc diff :width :height))
         (some attribute-changed? attributes)))))
 
+(defn entity-has-structural-diff?
+  "Check if entity has STRUCTURAL changes (name, constraints, attributes, etc.)
+   but NOT RLS-only changes. Used to determine if relations should be pulled
+   from global model - RLS changes shouldn't trigger relation pulling."
+  [{:keys [attributes]
+    :as entity}]
+  (let [{:keys [diff added?]} (projection-data entity)]
+    (and
+      (not added?)
+      (or
+        ;; Structural diff excludes :width, :height, and :configuration (RLS)
+        (not-empty (dissoc diff :width :height :configuration))
+        (some attribute-changed? attributes)))))
+
 (defn new-entity? [e] (boolean (:added? (projection-data e))))
 (defn strong-entity? [{:keys [type]}] (= "STRONG" type))
 (defn weak-entity? [{:keys [type]}] (= "WEAK" type))
 
 (def entity-changed? (some-fn new-entity? entity-has-diff?))
 (def entity-not-changed? (complement entity-changed?))
+
+;; Structural changes only (excludes RLS-only changes)
+;; Used for relation-pulling logic - we don't want to pull relations
+;; from global just because RLS changed
+(def entity-structurally-changed? (some-fn new-entity? entity-has-structural-diff?))
 
 (defn new-relation? [r] (boolean (:added? (projection-data r))))
 (defn relation-has-diff? [r] (some? (:diff (projection-data r))))
@@ -986,6 +1007,254 @@
 
 (defn recursive-relation? [relation]
   (boolean (#{"tree"} (:cardinality relation))))
+
+
+;;; RLS Guard Projection - for deployment diff tracking
+
+(defn- conditions-equal?
+  "Compare conditions as sets (order-insensitive).
+   Two condition lists are equal if they contain the same conditions
+   regardless of order."
+  [conds1 conds2]
+  (= (set conds1) (set conds2)))
+
+(defn- guard-changed?
+  "Check if a guard has changed between old and new versions.
+   Compares :operation and :conditions (order-insensitive)."
+  [old-guard new-guard]
+  (or (not= (:operation old-guard) (:operation new-guard))
+      (not (conditions-equal? (:conditions old-guard) (:conditions new-guard)))))
+
+(defn- compute-guard-diff
+  "Compute what changed in a guard between old and new versions.
+   Returns a map of changed fields with their old values."
+  [old-guard new-guard]
+  (cond-> {}
+    (not= (:operation old-guard) (:operation new-guard))
+    (assoc :operation (:operation old-guard))
+
+    (not (conditions-equal? (:conditions old-guard) (:conditions new-guard)))
+    (assoc :conditions (:conditions old-guard))))
+
+
+(defn project-rls-guards
+  "Project RLS guards from old config onto new config.
+   Returns guards with projection metadata:
+   - :added? for guards in new but not old
+   - :removed? for guards in old but not new
+   - :diff for guards in both but changed
+
+   Compares by :id, not position. Conditions compared as sets."
+  [old-rls new-rls]
+  (let [old-guards (or (:guards old-rls) [])
+        new-guards (or (:guards new-rls) [])
+        old-by-id (into {} (map (juxt :id identity) old-guards))
+        new-by-id (into {} (map (juxt :id identity) new-guards))
+        old-ids (set (keys old-by-id))
+        new-ids (set (keys new-by-id))
+        ;; Guards only in new = added
+        added-ids (clojure.set/difference new-ids old-ids)
+        ;; Guards only in old = removed
+        removed-ids (clojure.set/difference old-ids new-ids)
+        ;; Guards in both = check for changes
+        common-ids (clojure.set/intersection old-ids new-ids)
+        ;; Build projected guards
+        projected-guards
+        (concat
+          ;; Added guards
+          (for [id added-ids
+                :let [guard (get new-by-id id)]]
+            (vary-meta guard assoc-in [:dataset/projection :added?] true))
+          ;; Removed guards
+          (for [id removed-ids
+                :let [guard (get old-by-id id)]]
+            (vary-meta guard assoc-in [:dataset/projection :removed?] true))
+          ;; Common guards - check for changes
+          (for [id common-ids
+                :let [old-guard (get old-by-id id)
+                      new-guard (get new-by-id id)]]
+            (if (guard-changed? old-guard new-guard)
+              (vary-meta new-guard assoc-in [:dataset/projection :diff]
+                         (compute-guard-diff old-guard new-guard))
+              new-guard)))]
+    {:enabled (get new-rls :enabled (get old-rls :enabled false))
+     :guards (vec projected-guards)}))
+
+
+(defn rls-has-changes?
+  "Check if RLS configuration has any effective changes.
+   Only added and changed guards count - removed guards don't affect
+   the deployed state due to merge semantics (guards persist from other versions)."
+  [projected-rls]
+  (let [guards (:guards projected-rls)
+        result (some (fn [guard]
+                       (let [proj (:dataset/projection (meta guard))
+                             added? (:added? proj)
+                             has-diff? (not-empty (:diff proj))
+                             removed? (:removed? proj)]
+                         #?(:cljs (when (or added? has-diff? removed?)
+                                    (js/console.log "[RLS Debug] Guard projection:"
+                                                    "\n  guard-id:" (:id guard)
+                                                    "\n  added?:" added?
+                                                    "\n  has-diff?:" has-diff?
+                                                    "\n  removed?:" removed?)))
+                         ;; Only added or changed guards actually affect deployment
+                         ;; Removed guards persist from other deployed versions
+                         (or added? has-diff?)))
+                     guards)]
+    result))
+
+
+;;; Dual-base projection for RLS
+
+(defn rls-differs-from-base?
+  "Check if RLS configuration differs from base for deployability purposes.
+   Unlike rls-has-changes?, this considers ALL differences including:
+   - Added guards
+   - Changed guards
+   - Removed guards (this version doesn't have guards that base has)
+   - Enabled flag differences"
+  [base-rls target-rls]
+  (let [base-enabled (get base-rls :enabled false)
+        target-enabled (get target-rls :enabled false)
+        base-guards (or (:guards base-rls) [])
+        target-guards (or (:guards target-rls) [])
+        base-guard-ids (set (map :id base-guards))
+        target-guard-ids (set (map :id target-guards))
+        ;; Any difference in guards (added, removed, or potentially changed)
+        guards-differ? (or
+                         ;; Different guard IDs
+                         (not= base-guard-ids target-guard-ids)
+                         ;; Or if same IDs, check for changes in guard content
+                         (let [projected (project-rls-guards base-rls target-rls)]
+                           (rls-has-changes? projected)))
+        enabled-differs? (not= base-enabled target-enabled)]
+    #?(:cljs (js/console.log "[RLS Debug] rls-differs-from-base?:"
+                             "\n  base-enabled:" base-enabled
+                             "\n  target-enabled:" target-enabled
+                             "\n  enabled-differs?:" enabled-differs?
+                             "\n  base-guard-ids:" base-guard-ids
+                             "\n  target-guard-ids:" target-guard-ids
+                             "\n  guards-differ?:" guards-differ?))
+    (or enabled-differs? guards-differ?)))
+
+
+(defn project-entity-with-rls-base
+  "Project entity with separate bases for structural and RLS projection.
+
+   Arguments:
+   - global-entity: entity from global model (for structural projection)
+   - target-entity: the working/target entity to project
+   - rls-base-entity: entity from last deployed version (for RLS projection)
+
+   Structural changes (attributes, name, constraints) are compared against global-entity.
+   RLS guards are compared against rls-base-entity (last deployed version of this dataset).
+
+   This makes RLS diff meaningful - it shows what THIS version adds/changes vs last deployed,
+   not vs the global union of all deployed versions."
+  [global-entity target-entity rls-base-entity]
+  (if (nil? target-entity)
+    ;; No target - just mark global as removed if exists
+    (when global-entity (mark-removed global-entity))
+    ;; Project normally for structural changes using global
+    (let [structural-projection (project global-entity target-entity)
+          ;; Now re-project RLS against the rls-base (last deployed version)
+          rls-base (get-in rls-base-entity [:configuration :rls])
+          rls-target (get-in target-entity [:configuration :rls])
+          projected-rls (when (or rls-base rls-target)
+                          (project-rls-guards rls-base rls-target))
+          ;; Check for ANY RLS difference (added, changed, OR removed guards, or enabled flag)
+          has-rls-diff? (rls-differs-from-base? rls-base rls-target)]
+      #?(:cljs (js/console.log "[RLS Debug] project-entity-with-rls-base:"
+                               "\n  entity:" (:name target-entity)
+                               "\n  rls-base enabled:" (:enabled rls-base)
+                               "\n  rls-target enabled:" (:enabled rls-target)
+                               "\n  rls-base guards:" (count (:guards rls-base))
+                               "\n  rls-target guards:" (count (:guards rls-target))
+                               "\n  projected guards:" (count (:guards projected-rls))
+                               "\n  has-rls-diff?:" has-rls-diff?))
+      (if has-rls-diff?
+        ;; Replace RLS in projection with the rls-base-projected version
+        (-> structural-projection
+            (assoc-in [:configuration :rls] projected-rls)
+            (vary-meta assoc-in [:dataset/projection :diff :configuration :rls] rls-base))
+        ;; No RLS changes vs last deployed - use structural projection but clear RLS diff
+        (-> structural-projection
+            (vary-meta update-in [:dataset/projection :diff] dissoc :configuration))))))
+
+
+(defn has-rls-changes-from-base?
+  "Check if any entity has RLS changes compared to a base model.
+
+   Arguments:
+   - target: the working model being checked
+   - base: the last deployed version model (or nil)
+
+   Returns true if any entity has RLS config that differs from the base.
+   Used for deployability check: can-deploy? = has-structural-changes? OR has-rls-changes?"
+  [target base]
+  #?(:cljs (js/console.log "[RLS Debug] has-rls-changes-from-base?"
+                           "\n  target exists?:" (boolean target)
+                           "\n  base exists?:" (boolean base)
+                           "\n  target entity count:" (count (get-entities target))
+                           "\n  base entity count:" (count (get-entities base))))
+  (when base
+    (let [result (some (fn [entity]
+                         (let [base-entity (get-entity base (:euuid entity))
+                               base-rls (get-in base-entity [:configuration :rls])
+                               target-rls (get-in entity [:configuration :rls])
+                               differs? (rls-differs-from-base? base-rls target-rls)]
+                           #?(:cljs (js/console.log "[RLS Debug] Entity RLS check:"
+                                                    "\n  entity:" (:name entity)
+                                                    "\n  base-rls:" base-rls
+                                                    "\n  target-rls:" target-rls
+                                                    "\n  differs?:" differs?))
+                           differs?))
+                       (get-entities target))]
+      #?(:cljs (js/console.log "[RLS Debug] has-rls-changes-from-base? result:" result))
+      result)))
+
+
+(defn project-with-rls-base
+  "Project model with separate bases for structural and RLS projection.
+
+   Arguments:
+   - global: the global model (union of all deployed versions)
+   - target: the working model to project
+   - rls-base: the model from last deployed version of THIS dataset (for RLS projection)
+
+   Structural changes are projected against global (entities, relations, attributes).
+   RLS guards are projected against rls-base to show meaningful diff for this dataset version.
+
+   If rls-base is nil, falls back to normal projection (all against global)."
+  [global target rls-base]
+  (if (nil? rls-base)
+    ;; No last deployed version - use normal projection
+    (project global target)
+    ;; Dual-base projection
+    ;; rls-base can be either an ERDModel directly or a version map {:euuid, :name, :model, :deployed}
+    (let [rls-base-model (if (instance? ERDModel rls-base)
+                           rls-base
+                           (:model rls-base))]
+      (as-> target projection
+        ;; Project entities with dual base
+        (reduce
+          (fn [m {id :euuid :as e}]
+            (let [global-entity (get-entity global id)
+                  rls-base-entity (get-entity rls-base-model id)
+                  projected-entity (project-entity-with-rls-base global-entity e rls-base-entity)]
+              (set-entity m projected-entity)))
+          projection
+          (get-entities projection))
+        ;; Project relations normally against global (no RLS on relations)
+        ;; Only project relations that ALREADY EXIST in the target model
+        ;; Do NOT pull in relations from global that don't exist in target
+        (reduce
+          (fn [m {id :euuid :as r}]
+            (set-relation m (project (get-relation global id) r)))
+          projection
+          (get-relations projection))))))
+
 
 (extend-protocol ERDModelProjectionProtocol
   ;; ENTITY ATTRIBUTE
@@ -1132,6 +1401,9 @@
             csn (get-in that [:configuration :constraints :unique])
             rlso (get-in this [:configuration :rls])
             rlsn (get-in that [:configuration :rls])
+            ;; Project RLS guards with granular tracking
+            projected-rls (when (or rlso rlsn)
+                            (project-rls-guards rlso rlsn))
             changed-attributes (vec (filter attribute-changed? attributes'))]
         (cond->
           (assoc that :attributes attributes')
@@ -1142,8 +1414,9 @@
           (not= cso csn)
           (vary-meta assoc-in [:dataset/projection :diff :configuration :constraints :unique] cso)
           ;;
-          (not= rlso rlsn)
-          (vary-meta assoc-in [:dataset/projection :diff :configuration :rls] rlso)
+          (rls-has-changes? projected-rls)
+          (-> (assoc-in [:configuration :rls] projected-rls)
+              (vary-meta assoc-in [:dataset/projection :diff :configuration :rls] rlso))
           ;;
           (not-empty changed-attributes)
           (vary-meta assoc-in [:dataset/projection :diff :attributes] changed-attributes)))
@@ -1486,6 +1759,12 @@
            relation-paths (discover-relation-paths model entity iam-uuids max-depth ref-count)]
        ;; Combine: refs first (depth 0), then relations (depth 1+)
        (into ref-paths relation-paths)))))
+
+
+
+
+
+
 
 
 ;; RLS Configuration Helpers

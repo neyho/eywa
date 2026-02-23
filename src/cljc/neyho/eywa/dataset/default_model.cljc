@@ -1,7 +1,6 @@
 (ns neyho.eywa.dataset.default-model
-  (:use
-   [neyho.eywa.dataset.core :as dataset])
   (:require
+   [neyho.eywa.dataset.core :as dataset]
    clojure.set
    clojure.data))
 

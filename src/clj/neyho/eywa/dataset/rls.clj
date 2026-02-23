@@ -268,7 +268,8 @@
 
    Returns modified [stack data] with RLS conditions injected"
   [schema [stack data] operation]
-  (let [{:keys [entity entity/as rls]} schema
+  (let [{:keys [entity rls]} schema
+        as (or (:rls/as schema) (:entity/as schema))
         {:keys [enabled guards]} rls]
     (cond
       ;; No RLS config or not enabled

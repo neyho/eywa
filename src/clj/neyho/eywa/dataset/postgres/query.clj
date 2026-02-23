@@ -1303,24 +1303,26 @@
                                       (or
                                        ref? recursion?
                                        (relation-accessible? relation [from to] #{:read}))
-                                      (assoc final (or alias rkey)
-                                             (merge
-                                              (clojure.set/rename-keys rdata {:table :relation/table})
-                                              {:relation/as (str (gensym "link_"))
-                                               :entity/as (str (gensym "data_"))}
-                                              (selection->schema
-                                               (:to rdata) selections
-                                               (cond-> new-args
-                                                 (and
-                                                  (not= (:from rdata) (:to rdata))
-                                                  (contains? args rkey))
-                                                 (merge (get args rkey))
-                                                 ;;
-                                                 (contains? order-by rkey)
-                                                 (assoc :_order_by (get order-by rkey))
-                                                 ;;
-                                                 (contains? distinct-on rkey)
-                                                 (assoc :_distinct (get distinct-on rkey))))))))
+                                      (let [data-as (str (gensym "data_"))]
+                                        (assoc final (or alias rkey)
+                                               (merge
+                                                 (clojure.set/rename-keys rdata {:table :relation/table})
+                                                 {:relation/as (str (gensym "link_"))
+                                                  :entity/as data-as
+                                                  :rls/as data-as}
+                                                 (selection->schema
+                                                   (:to rdata) selections
+                                                   (cond-> new-args
+                                                     (and
+                                                       (not= (:from rdata) (:to rdata))
+                                                       (contains? args rkey))
+                                                     (merge (get args rkey))
+                                                     ;;
+                                                     (contains? order-by rkey)
+                                                     (assoc :_order_by (get order-by rkey))
+                                                     ;;
+                                                     (contains? distinct-on rkey)
+                                                     (assoc :_distinct (get distinct-on rkey)))))))))
                                   rs
                                   (get objects rkey))
                                  rs)
@@ -1380,9 +1382,11 @@
                                     recursions))))
          aggregate-keys [:_count :_agg]
          ;; Build base schema
+         data-as (str (gensym "data_"))
          base-schema (as-> (hash-map
                             :entity entity-id
-                            :entity/as (str (gensym "data_"))
+                            :entity/as data-as
+                            :rls/as data-as
                             :entity/table table
                             :fields scalars
                             :counted? (contains? selection :count)
@@ -1423,11 +1427,14 @@
                                                         (dissoc :relations)
                                                         (clojure.set/rename-keys {:table :relation/table})
                                                         (merge (entity-serde (:to rdata)))
-                                                        (assoc
-                                                         :pinned true
-                                                         :entity/table (:to/table rdata)
-                                                         :relation/as (str (gensym "link_"))
-                                                         :entity/as (str (gensym "data_"))))]
+                                                        ((fn [m]
+                                                           (let [data-as (str (gensym "data_"))]
+                                                             (assoc m
+                                                                    :pinned true
+                                                                    :entity/table (:to/table rdata)
+                                                                    :relation/as (str (gensym "link_"))
+                                                                    :entity/as data-as
+                                                                    :rls/as data-as)))))]
                                           (case specifics
                                             (nil [nil]) (assoc-in schema [:_count rkey] relation)
                                             (reduce
@@ -1457,7 +1464,8 @@
                                         ;; RELATION AGGREGATE: rkey is a relation to another entity
                                         ;; Structure: _agg { relation { field { operation } } }
                                         ;; e.g., _agg { offer_items { price { min avg } } }
-                                        (let [relation (->
+                                        (let [data-as (str (gensym "data_"))
+                                              relation (->
                                                         rdata
                                                         (dissoc :_agg)
                                                         (dissoc :relations)
@@ -1467,7 +1475,8 @@
                                                          :pinned true
                                                          :entity/table (:to/table rdata)
                                                          :relation/as (str (gensym "link_"))
-                                                         :entity/as (str (gensym "data_"))))
+                                                         :entity/as data-as
+                                                         :rls/as data-as))
                                               schema (assoc-in schema [:_agg rkey] relation)]
                                           ;; specifics is {field-key [{:selections {op ...}, :alias, :args}]}
                                           ;; e.g., {:price [{:selections {:min [...], :avg [...]}}]}
@@ -3260,7 +3269,7 @@
                                   (log/debugf
                                    "[%s] slicing query:\n%s"
                                    entity-id query)
-                                  (postgres/execute! tx query core/*return-type*)
+                                  (postgres/execute! tx query *return-type*)
                                    ;; TODO - Enable this
                                    ; (async/put!
                                    ;   core/client
@@ -3270,7 +3279,7 @@
                                    ;    :selection selection})
                                   true
                                   (catch Throwable e
-                                    (log/errorf e "Couldn't slice entity")
+                                    (log/error e "Couldn't slice entity")
                                     false))))
                        nil
                        queries)]
