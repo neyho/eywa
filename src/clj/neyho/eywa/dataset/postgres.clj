@@ -1473,6 +1473,8 @@
   core/DatasetProtocol
   (core/deploy! [this {:keys [model]
                        :as version}]
+    (comment
+      (map :name (core/get-entities (dataset/deployed-model))))
     (try
       (let [;; Get current global model WITH CLAIMS from in-memory state (or empty if first deployment)
             ;; Use in-memory model to stay consistent with mount's view of global state

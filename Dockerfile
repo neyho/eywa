@@ -69,7 +69,7 @@ USER eywa
 # Set environment variables
 ENV EYWA_HOME=/data/eywa \
     EYWA_LOG_LEVEL=INFO \
-    EYWA_IAM_ENFORCE_ACCESS=true \
+    EYWA_IAM_ENFORCE_ACCESS=false \
     EYWA_SERVE=/opt/web \
     EYWA_SERVER_HOST=0.0.0.0 \
     EYWA_SERVER_PORT=8080 \

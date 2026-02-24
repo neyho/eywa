@@ -1092,12 +1092,6 @@
                              added? (:added? proj)
                              has-diff? (not-empty (:diff proj))
                              removed? (:removed? proj)]
-                         #?(:cljs (when (or added? has-diff? removed?)
-                                    (js/console.log "[RLS Debug] Guard projection:"
-                                                    "\n  guard-id:" (:id guard)
-                                                    "\n  added?:" added?
-                                                    "\n  has-diff?:" has-diff?
-                                                    "\n  removed?:" removed?)))
                          ;; Only added or changed guards actually affect deployment
                          ;; Removed guards persist from other deployed versions
                          (or added? has-diff?)))
@@ -1129,13 +1123,6 @@
                          (let [projected (project-rls-guards base-rls target-rls)]
                            (rls-has-changes? projected)))
         enabled-differs? (not= base-enabled target-enabled)]
-    #?(:cljs (js/console.log "[RLS Debug] rls-differs-from-base?:"
-                             "\n  base-enabled:" base-enabled
-                             "\n  target-enabled:" target-enabled
-                             "\n  enabled-differs?:" enabled-differs?
-                             "\n  base-guard-ids:" base-guard-ids
-                             "\n  target-guard-ids:" target-guard-ids
-                             "\n  guards-differ?:" guards-differ?))
     (or enabled-differs? guards-differ?)))
 
 
@@ -1165,14 +1152,6 @@
                           (project-rls-guards rls-base rls-target))
           ;; Check for ANY RLS difference (added, changed, OR removed guards, or enabled flag)
           has-rls-diff? (rls-differs-from-base? rls-base rls-target)]
-      #?(:cljs (js/console.log "[RLS Debug] project-entity-with-rls-base:"
-                               "\n  entity:" (:name target-entity)
-                               "\n  rls-base enabled:" (:enabled rls-base)
-                               "\n  rls-target enabled:" (:enabled rls-target)
-                               "\n  rls-base guards:" (count (:guards rls-base))
-                               "\n  rls-target guards:" (count (:guards rls-target))
-                               "\n  projected guards:" (count (:guards projected-rls))
-                               "\n  has-rls-diff?:" has-rls-diff?))
       (if has-rls-diff?
         ;; Replace RLS in projection with the rls-base-projected version
         (-> structural-projection
@@ -1193,25 +1172,14 @@
    Returns true if any entity has RLS config that differs from the base.
    Used for deployability check: can-deploy? = has-structural-changes? OR has-rls-changes?"
   [target base]
-  #?(:cljs (js/console.log "[RLS Debug] has-rls-changes-from-base?"
-                           "\n  target exists?:" (boolean target)
-                           "\n  base exists?:" (boolean base)
-                           "\n  target entity count:" (count (get-entities target))
-                           "\n  base entity count:" (count (get-entities base))))
   (when base
     (let [result (some (fn [entity]
                          (let [base-entity (get-entity base (:euuid entity))
                                base-rls (get-in base-entity [:configuration :rls])
                                target-rls (get-in entity [:configuration :rls])
                                differs? (rls-differs-from-base? base-rls target-rls)]
-                           #?(:cljs (js/console.log "[RLS Debug] Entity RLS check:"
-                                                    "\n  entity:" (:name entity)
-                                                    "\n  base-rls:" base-rls
-                                                    "\n  target-rls:" target-rls
-                                                    "\n  differs?:" differs?))
                            differs?))
                        (get-entities target))]
-      #?(:cljs (js/console.log "[RLS Debug] has-rls-changes-from-base? result:" result))
       result)))
 
 
@@ -1239,7 +1207,8 @@
       (as-> target projection
         ;; Project entities with dual base
         (reduce
-          (fn [m {id :euuid :as e}]
+          (fn [m {id :euuid
+                  :as e}]
             (let [global-entity (get-entity global id)
                   rls-base-entity (get-entity rls-base-model id)
                   projected-entity (project-entity-with-rls-base global-entity e rls-base-entity)]
@@ -1250,7 +1219,8 @@
         ;; Only project relations that ALREADY EXIST in the target model
         ;; Do NOT pull in relations from global that don't exist in target
         (reduce
-          (fn [m {id :euuid :as r}]
+          (fn [m {id :euuid
+                  :as r}]
             (set-relation m (project (get-relation global id) r)))
           projection
           (get-relations projection))))))

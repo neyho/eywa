@@ -1287,11 +1287,35 @@
                    nil
                    arg-fields)
          objects (apply dissoc selection (keys scalars))
+         ;; Helper to extract all keys from nested args (including _where, _and, _or, _maybe)
+         nested-arg-keys (letfn [(collect-keys [args]
+                                   (when (map? args)
+                                     (reduce-kv
+                                      (fn [result k v]
+                                        (-> result
+                                            (conj k)
+                                            (into (collect-keys (:_where args)))
+                                            (into (collect-keys (:_maybe args)))
+                                            (into (mapcat collect-keys (:_and args)))
+                                            (into (mapcat collect-keys (:_or args)))))
+                                      #{}
+                                      args)))]
+                           (collect-keys args))
+         ;; Helper to extract value for a key from nested args structure
+         get-nested-arg (letfn [(find-value [args k]
+                                  (when (map? args)
+                                    (or (get args k)
+                                        (find-value (:_where args) k)
+                                        (find-value (:_maybe args) k)
+                                        (some #(find-value % k) (:_and args))
+                                        (some #(find-value % k) (:_or args)))))]
+                          (fn [k] (find-value args k)))
          narrow-relations (reduce-kv
                            (fn [rs rkey rdata]
                              (if (valid-relations rkey)
                                (if (or
                                     (contains? args rkey)
+                                    (contains? nested-arg-keys rkey)  ;; Check nested args too
                                     (contains? objects rkey)
                                     (contains? order-by rkey)
                                     (contains? distinct-on rkey)
@@ -1324,7 +1348,14 @@
                                                      (contains? distinct-on rkey)
                                                      (assoc :_distinct (get distinct-on rkey)))))))))
                                   rs
-                                  (get objects rkey))
+                                  ;; When ref/relation is used in args (e.g. _where) but not selected,
+                                  ;; create a minimal entry so the WHERE clause is still generated
+                                  (or (not-empty (get objects rkey))
+                                      (when (or (contains? args rkey)
+                                                (contains? nested-arg-keys rkey))
+                                        [{:selections {:euuid nil}
+                                          :args (or (get args rkey)
+                                                    (get-nested-arg rkey))}])))
                                  rs)
                                rs))
                            nil
@@ -1421,30 +1452,56 @@
                                           rdata (get relations rkey)]
                                       ;; Only process if rkey is a valid relation
                                       (if (some? rdata)
-                                        (let [relation (->
-                                                        rdata
-                                                        (dissoc :_count)
-                                                        (dissoc :relations)
-                                                        (clojure.set/rename-keys {:table :relation/table})
-                                                        (merge (entity-serde (:to rdata)))
-                                                        ((fn [m]
-                                                           (let [data-as (str (gensym "data_"))]
-                                                             (assoc m
-                                                                    :pinned true
-                                                                    :entity/table (:to/table rdata)
-                                                                    :relation/as (str (gensym "link_"))
-                                                                    :entity/as data-as
-                                                                    :rls/as data-as)))))]
-                                          (case specifics
-                                            (nil [nil]) (assoc-in schema [:_count rkey] relation)
-                                            (reduce
-                                             (fn [schema {:keys [alias args]}]
-                                               (let [akey (or alias rkey)]
-                                                 (assoc-in schema [:_count akey]
-                                                           (cond-> relation
-                                                             args (assoc :args (clojure.set/rename-keys args {:_where :_maybe}))))))
-                                             schema
-                                             specifics)))
+                                        (case specifics
+                                          (nil [nil])
+                                          (let [data-as (str (gensym "data_"))
+                                                rel (->
+                                                      rdata
+                                                      (dissoc :_count)
+                                                      (dissoc :relations)
+                                                      (clojure.set/rename-keys {:table :relation/table})
+                                                      (merge (entity-serde (:to rdata)))
+                                                      (assoc
+                                                        :pinned true
+                                                        :entity/table (:to/table rdata)
+                                                        :relation/as (str (gensym "link_"))
+                                                        :entity/as data-as
+                                                        :rls/as data-as))]
+                                            (assoc-in schema [:_count rkey] rel))
+                                          ;; Process all entries (for aliases)
+                                          (reduce
+                                           (fn [schema {:keys [alias args]}]
+                                             (let [akey (or alias rkey)
+                                                   data-as (str (gensym "data_"))
+                                                   ;; Rename _where to _maybe for count
+                                                   args' (when args (clojure.set/rename-keys args {:_where :_maybe}))
+                                                   ;; Build nested schema to handle refs in args
+                                                   nested-schema (when args'
+                                                                   (selection->schema
+                                                                     (:to rdata)
+                                                                     nil
+                                                                     args'))
+                                                   rel (->
+                                                         rdata
+                                                         (dissoc :_count)
+                                                         (dissoc :relations)
+                                                         (clojure.set/rename-keys {:table :relation/table})
+                                                         (merge (entity-serde (:to rdata)))
+                                                         (assoc
+                                                           :pinned true
+                                                           :entity/table (:to/table rdata)
+                                                           :relation/as (str (gensym "link_"))
+                                                           :entity/as data-as
+                                                           :rls/as data-as)
+                                                         (cond->
+                                                           args'
+                                                           (assoc :args args')
+                                                           ;;
+                                                           (and nested-schema (:relations nested-schema))
+                                                           (assoc :relations (:relations nested-schema))))]
+                                               (assoc-in schema [:_count akey] rel)))
+                                           schema
+                                           specifics))
                                         ;; Skip non-relation keys (shouldn't happen for _count, but be safe)
                                         schema)))
                                   schema
@@ -1456,53 +1513,68 @@
                               (reduce
                                (fn [schema {operations :selections}]
                                  (reduce-kv
-                                  (fn [schema relation [{specifics :selections}]]
-                                    (let [rkey (keyword (name relation))
+                                  (fn [schema relation-key entries]
+                                    (let [rkey (keyword (name relation-key))
                                           rdata (get relations rkey)]
                                       ;; Check if this is a relation or a direct numeric field
                                       (if (some? rdata)
                                         ;; RELATION AGGREGATE: rkey is a relation to another entity
-                                        ;; Structure: _agg { relation { field { operation } } }
-                                        ;; e.g., _agg { offer_items { price { min avg } } }
-                                        (let [data-as (str (gensym "data_"))
-                                              relation (->
-                                                        rdata
-                                                        (dissoc :_agg)
-                                                        (dissoc :relations)
-                                                        (clojure.set/rename-keys {:table :relation/table})
-                                                        (merge (entity-serde (:to rdata)))
-                                                        (assoc
+                                        ;; Process ALL entries (for aliases like diana:allocations, charlie:allocations)
+                                        (reduce
+                                         (fn [schema {:keys [alias args selections] :as entry}]
+                                           (let [akey (or alias rkey)
+                                                 data-as (str (gensym "data_"))
+                                                 ;; Build nested schema to handle refs in _where args
+                                                 nested-schema (when args
+                                                                 (selection->schema
+                                                                   (:to rdata)
+                                                                   nil  ;; no selection needed, just args
+                                                                   args))
+                                                 rel (->
+                                                       rdata
+                                                       (dissoc :_agg)
+                                                       (dissoc :relations)
+                                                       (clojure.set/rename-keys {:table :relation/table})
+                                                       (merge (entity-serde (:to rdata)))
+                                                       (assoc
                                                          :pinned true
                                                          :entity/table (:to/table rdata)
                                                          :relation/as (str (gensym "link_"))
                                                          :entity/as data-as
-                                                         :rls/as data-as))
-                                              schema (assoc-in schema [:_agg rkey] relation)]
-                                          ;; specifics is {field-key [{:selections {op ...}, :alias, :args}]}
-                                          ;; e.g., {:price [{:selections {:min [...], :avg [...]}}]}
-                                          (reduce-kv
-                                           (fn [schema fkey aggregate-selections]
-                                             ;; fkey is the field (like :price)
-                                             (reduce
-                                              (fn [schema {:keys [alias args selections]}]
-                                                ;; Each selection has operations as keys in :selections
-                                                ;; e.g., {:min [...], :avg [...]}
-                                                (let [field (keyword (name (or alias fkey)))]
-                                                  (reduce-kv
-                                                   (fn [schema operation _]
-                                                     (let [operation (keyword (name operation))]
-                                                       (assoc-in schema [:_agg rkey operation field]
-                                                                 [fkey (when args {:args args})])))
-                                                   schema
-                                                   selections)))
+                                                         :rls/as data-as)
+                                                       ;; Merge nested schema to get relations for refs in args
+                                                       (cond->
+                                                         args
+                                                         (assoc :args args)
+                                                         ;;
+                                                         (and nested-schema (:relations nested-schema))
+                                                         (assoc :relations (:relations nested-schema))))
+                                                 ;; Add relation to schema under alias key
+                                                 schema (assoc-in schema [:_agg akey] rel)]
+                                             ;; Process field aggregates (e.g., hours { min max avg sum })
+                                             (reduce-kv
+                                              (fn [schema fkey aggregate-selections]
+                                                (reduce
+                                                 (fn [schema {:keys [alias args selections]}]
+                                                   (let [field (keyword (name (or alias fkey)))]
+                                                     (reduce-kv
+                                                      (fn [schema operation _]
+                                                        (let [operation (keyword (name operation))]
+                                                          (assoc-in schema [:_agg akey operation field]
+                                                                    [fkey (when args {:args args})])))
+                                                      schema
+                                                      selections)))
+                                                 schema
+                                                 aggregate-selections))
                                               schema
-                                              aggregate-selections))
-                                           schema
-                                           specifics))
+                                              selections)))
+                                         schema
+                                         entries)
                                         ;; DIRECT FIELD AGGREGATE: rkey is a numeric field on current entity
                                         ;; Structure: _agg { priority { min max avg sum } }
-                                        ;; Operations are direct children (keys of specifics)
-                                        (let [ops (vec (map name (keys specifics)))]
+                                        (let [first-entry (first entries)
+                                              specifics (:selections first-entry)
+                                              ops (vec (map name (keys specifics)))]
                                           (if (not-empty ops)
                                             (assoc-in schema [:aggregate rkey]
                                                       {:operations ops})
@@ -1696,13 +1768,10 @@
                 ;; Ignore for now...
                 :_maybe
                 (if *ignore-maybe* [statements data]
-                    (binding [*deep* false]
-                      (let [[statements' data'] (query-selection->sql
-                                                 (-> schema
-                                                     (assoc :args constraints)
-                                                     (dissoc :relations)))]
-                        [(conj statements [:or statements'])
-                         (into data data')])))
+                    (let [[statements' data'] (query-selection->sql
+                                               (assoc schema :args constraints))]
+                      [(conj statements [:or statements'])
+                       (into data data')]))
                 ;; Ignore join
                 :_join
                 [statements data]
@@ -2239,8 +2308,10 @@
                       ;; Guard against empty numerics-selections (would cause SQL syntax error)
                       (if (empty? numerics-selections)
                         nil
+                        ;; For conditional aggregates (with CASE WHEN), the filtering is done in
+                        ;; the aggregate expressions themselves, so we don't add a WHERE clause.
+                        ;; This allows multiple aliases with different filters to work correctly.
                         (let [[_ from] (search-stack-from aggregate-schema)
-                              [where where-data] (search-stack-args aggregate-schema)
                               [query-string :as query]
                               (as->
                                (format
@@ -2248,17 +2319,13 @@
                                 as (str/join ", " numerics-selections) from)
                                query
                                 ;;
-                                (if-not where
-                                  query
-                                  (str query \newline "where " where))
-                                ;;
                                 (str query \newline
                                      (format "group by %s._eid" as))
                                 ;;
-                                (reduce into [query] (remove nil? [numerics-data where-data])))
+                                (reduce into [query] [numerics-data]))
                               _ (log/tracef
-                                 "[%s] Sending numerics aggregate query:\n%s\n%s\n%s"
-                                 table query-string numerics-data where-data)
+                                 "[%s] Sending numerics aggregate query:\n%s\n%s"
+                                 table query-string numerics-data)
                               result (postgres/execute! con query *return-type*)]
                           (reduce
                            (fn [r {:keys [parent_id] :as data}]
@@ -2860,25 +2927,37 @@
 
 (defn shave-schema-relations
   ([schema]
-   (let [arg-keys (set (keys (:args schema)))
-         relation-keys (set (keys (:relations schema)))
-         valid-keys (clojure.set/intersection arg-keys relation-keys)]
-     (update schema :relations select-keys valid-keys)))
+   (letfn [(collect-arg-keys [args]
+             (when (map? args)
+               (reduce-kv
+                 (fn [result k _]
+                   (-> result
+                       (conj k)
+                       (into (collect-arg-keys (:_where args)))
+                       (into (collect-arg-keys (:_maybe args)))
+                       (into (mapcat collect-arg-keys (:_and args)))
+                       (into (mapcat collect-arg-keys (:_or args)))))
+                 #{}
+                 args)))]
+     (let [arg-keys (collect-arg-keys (:args schema))
+           relation-keys (set (keys (:relations schema)))
+           valid-keys (clojure.set/intersection arg-keys relation-keys)]
+       (update schema :relations select-keys valid-keys))))
   ([schema cursor]
    (letfn [(shave [schema [current :as cursor]]
              ;; If there is no current cursor return schema
              (if-not current schema
-                     (assoc-in
+               (assoc-in
                  ;; Otherwise keep relations that have arguments
-                      (shave-schema-relations schema)
+                 (shave-schema-relations schema)
                  ;; And associate current schema
-                      [:relations current]
+                 [:relations current]
                  ;; With shaved schema for rest of cursor
-                      (shave (get-in schema [:relations current]) (rest cursor)))))]
+                 (shave (get-in schema [:relations current]) (rest cursor)))))]
      (if (not-empty cursor)
        (shave
-        (update-in schema (relations-cursor cursor) dissoc :relations)
-        cursor)
+         (update-in schema (relations-cursor cursor) dissoc :relations)
+         cursor)
        (dissoc schema :relations)))))
 
 (defn shave-schema-aggregates
