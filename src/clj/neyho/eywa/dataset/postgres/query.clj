@@ -485,37 +485,60 @@
 
 (declare search-entity)
 
+(defn- find-rls-denied-euuids
+  "Find records that exist but are denied by RLS for given operation.
+   Returns seq of denied euuids, or nil if all accessible.
+
+   Uses single query: SELECT euuid WHERE euuid IN (?) AND NOT (rls_conditions)
+
+   This is optimized from 2 queries (find existing + find accessible) to 1 query
+   that directly finds denied records."
+  [entity-id euuids operation]
+  (let [{:keys [entity/table rls]} (deployed-schema-entity entity-id)
+        {:keys [guards]} rls]
+    (when (and table (seq euuids))
+      (let [uuid-array (into-array java.util.UUID euuids)]
+        (if-let [{:keys [sql params]} (rls/compile-guards-to-sql "t" guards operation)]
+          ;; Has guards for this operation: find records that exist but fail the guards
+          (let [query (format "SELECT euuid FROM \"%s\" t WHERE euuid = ANY(?) AND NOT (%s) LIMIT 1"
+                              table sql)
+                result (postgres/execute!
+                         (:datasource *db*)
+                         (into [query uuid-array] params)
+                         *return-type*)]
+            (seq (map :euuid result)))
+          ;; No guards for this operation: any existing record is denied
+          (let [query (format "SELECT euuid FROM \"%s\" WHERE euuid = ANY(?) LIMIT 1" table)
+                result (postgres/execute!
+                         (:datasource *db*)
+                         [query uuid-array]
+                         *return-type*)]
+            (seq (map :euuid result))))))))
+
 (defn- check-rls-write-access
   "Check RLS write access for all entities in the result.
-   Throws if any existing record is not accessible for write."
+   Throws if any existing record is not accessible for write.
+
+   Optimized: Uses single query per entity to find denied records,
+   instead of two queries (find existing + find accessible)."
   [result]
   (when (rls/should-apply-guards?)
     (doseq [[table entity-id] (:entity/mapping result)]
       (let [schema (deployed-schema-entity entity-id)]
         (when-let [{:keys [enabled]} (:rls schema)]
           (when enabled
-            (let [records (get-in result [:entity table])
-                  euuids (->> records vals (keep :euuid) vec)]
-              (when (seq euuids)
-                ;; Find which euuids exist in DB (bypass RLS)
-                (let [existing (binding [*rls* nil]
-                                 (search-entity entity-id
-                                                {:euuid {:_in euuids}}
-                                                {:euuid nil}))
-                      existing-set (set (map :euuid existing))]
-                  ;; Of those that exist, check which user can write
-                  (when (seq existing-set)
-                    (let [accessible (binding [rls/*operation* :write]
-                                       (search-entity entity-id
-                                                      {:euuid {:_in (vec existing-set)}}
-                                                      {:euuid nil}))
-                          accessible-set (set (map :euuid accessible))
-                          denied (clojure.set/difference existing-set accessible-set)]
-                      (when (seq denied)
-                        (throw (ex-info "Write access denied by RLS"
-                                        {:entity entity-id
-                                         :table table
-                                         :denied denied}))))))))))))))
+            (let [euuids (->> (get-in result [:entity table])
+                              vals
+                              (keep :euuid)
+                              vec)]
+              (when-let [denied (find-rls-denied-euuids entity-id euuids :write)]
+                (throw
+                  (ex-info
+                    (str "Write access denied by RLS. User doesn't have write access for entity: "
+                         (:name (core/get-entity (neyho.eywa.dataset/deployed-model) entity-id)))
+                    {:entity entity-id
+                     :table table
+                     :denied (set denied)}))))))))))
 
 (defn enhance-write
   [tx result]
@@ -1953,9 +1976,11 @@
                     (some
                      targeting-args?
                      ((juxt :_and :_or :_where :_maybe) args')))))))
-          (targeting-schema? [[_ {:keys [args fields pinned]}]]
+          (targeting-schema? [[_ {:keys [args fields pinned counted? aggregate]}]]
             (or
              pinned
+             counted?
+             (not-empty aggregate)
              (targeting-args? args)
              (some targeting-args? (vals fields))))
           (find-arg-locations
@@ -3215,30 +3240,47 @@
 
 (defn- check-rls-delete-access
   "Check RLS delete access for the record being deleted.
-   Throws if record exists but user cannot delete it."
+  Throws if record exists but user cannot delete it.
+
+  Optimized: Uses single query to find denied records,
+  instead of two queries (find existing + find accessible)."
   [entity-id args]
   (when (and (rls/should-apply-guards?) (seq args))
-    (let [schema (deployed-schema-entity entity-id)]
-      (when-let [{:keys [enabled]} (:rls schema)]
+    (let [{:keys [entity/table rls]} (deployed-schema-entity entity-id)]
+      (when-let [{:keys [enabled guards]} rls]
         (when enabled
-          ;; Transform delete args {:key val} to search args {:key {:_eq val}}
-          (let [search-args (reduce-kv (fn [m k v] (assoc m k {:_eq v})) {} args)
-                ;; Check if record exists (bypass RLS)
-                existing (binding [*rls* nil]
-                           (search-entity entity-id search-args {:euuid nil}))
-                existing-euuids (set (map :euuid existing))]
-            (when (seq existing-euuids)
-              ;; Check if user can delete these records
-              (let [accessible (binding [rls/*operation* :delete]
-                                 (search-entity entity-id
-                                                {:euuid {:_in (vec existing-euuids)}}
-                                                {:euuid nil}))
-                    accessible-set (set (map :euuid accessible))
-                    denied (clojure.set/difference existing-euuids accessible-set)]
-                (when (seq denied)
+          ;; Build WHERE clause from delete args: {:key val} -> "key = ?"
+          (let [[where-clauses where-params]
+                (reduce-kv
+                  (fn [[clauses params] k v]
+                    [(conj clauses (format "\"%s\" = ?" (name k)))
+                     (conj params v)])
+                  [[] []]
+                  args)
+                where-sql (str/join " AND " where-clauses)]
+            (if-let [{:keys [sql params]} (rls/compile-guards-to-sql "t" guards :delete)]
+              ;; Has delete guards: find records that match delete criteria but fail RLS
+              (let [query (format "SELECT euuid FROM \"%s\" t WHERE %s AND NOT (%s) LIMIT 1"
+                                  table where-sql sql)
+                    all-params (into (vec where-params) params)
+                    result (postgres/execute!
+                             (:datasource *db*)
+                             (into [query] all-params)
+                             *return-type*)]
+                (when (seq result)
                   (throw (ex-info "Delete access denied by RLS"
                                   {:entity entity-id
-                                   :denied denied})))))))))))
+                                   :denied (set (map :euuid result))}))))
+              ;; No delete guards: any existing record is denied
+              (let [query (format "SELECT euuid FROM \"%s\" WHERE %s LIMIT 1" table where-sql)
+                    result (postgres/execute!
+                             (:datasource *db*)
+                             (into [query] where-params)
+                             *return-type*)]
+                (when (seq result)
+                  (throw (ex-info "Delete access denied by RLS - no delete guards configured"
+                                  {:entity entity-id
+                                   :denied (set (map :euuid result))})))))))))))
 
 (defn delete-entity
   ([entity-id args]

@@ -434,14 +434,14 @@
                       true
                       (assoc (entity->agg-object entity)
                         {:fields
-                         (cond->
-                           (reduce
-                             (fn [fields {:keys [to to-label]}]
-                               (if (not-empty to-label)
-                                 (assoc fields (attribute->gql-field to-label)
-                                        {:type (entity->agg-object to)
-                                         :args {:_where {:type (entity->search-operator to)}}})
-                                 fields))
+                         (as->
+                           {:count {:type 'Int}
+                            ;; Every entity has modified_by
+                            :modified_by {:type (entity->agg-object (core/get-entity model iu/user))
+                                          :args {:_where {:type (entity->search-operator (core/get-entity model iu/user))}}}}
+                           fields
+                           ;; Numeric field aggregates
+                           (if (not-empty (numerics? entity))
                              (reduce
                                (fn [fields {t :type
                                             n :name}]
@@ -457,9 +457,35 @@
                                            :args (zipmap
                                                    [:_gt :_lt :_eq :_neq :_ge :_le]
                                                    (repeat {:type 'Float}))})))
-                               {}
+                               fields
                                (numerics? entity))
-                             to-relations))})
+                             fields)
+                           ;; Relation aggregates
+                           (if (not-empty to-relations)
+                             (reduce
+                               (fn [fields {:keys [to to-label]}]
+                                 (if (not-empty to-label)
+                                   (assoc fields (attribute->gql-field to-label)
+                                          {:type (entity->agg-object to)
+                                           :args {:_where {:type (entity->search-operator to)}}})
+                                   fields))
+                               fields
+                               to-relations)
+                             fields)
+                           ;; Reference attribute aggregates (user/group/role)
+                           (if (not-empty references)
+                             (reduce
+                               (fn [fields {aname :name t :type}]
+                                 (let [ref-entity (case t
+                                                    "user" (core/get-entity model iu/user)
+                                                    "group" (core/get-entity model iu/user-group)
+                                                    "role" (core/get-entity model iu/user-role))]
+                                   (assoc fields (attribute->gql-field aname)
+                                          {:type (entity->agg-object ref-entity)
+                                           :args {:_where {:type (entity->search-operator ref-entity)}}})))
+                               fields
+                               references)
+                             fields))})
                   ;; Search-specific aggregate object (relations only, no direct field aggregates)
                   ;; Used for _agg on search results - aggregating related entities, not self
                       (some has-numerics? (map :to to-relations))

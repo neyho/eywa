@@ -1516,6 +1516,8 @@
           (core/add-to-deploy-history this updated-model)
           ;; Regenerate GraphQL schema with updated active flags
           (try
+            (comment
+              (def this *db*))
             (lacinia/add-shard ::datasets (fn [] (lacinia/generate-lacinia-schema this)))
             (catch Throwable e
               (log/error e "Couldn't add lacinia schema shard"))))
