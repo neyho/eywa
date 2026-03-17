@@ -31,7 +31,7 @@
     [patcho.patch :as patch])
   (:gen-class :main true))
 
-(patch/current-version :eywa/core "2026.01")
+(patch/current-version :eywa/core "2026.02")
 
 
 (defn setup
