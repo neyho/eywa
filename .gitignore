@@ -47,6 +47,7 @@ cljs-runtime/
 *.png
 *.jpg
 *.old
+.env*
 
 # Docker
 docker/backups/
