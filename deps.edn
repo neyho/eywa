@@ -39,6 +39,8 @@
   camel-snake-kebab/camel-snake-kebab {:mvn/version "0.4.3"}
   com.github.gersak/vura {:mvn/version "0.6.0"}
   ; com.github.gersak/vura                       {:local/root "../../vura"}
+  dev.gersak/timing.core {:local/root "../../timing/core"}
+  dev.gersak/timing.cron {:local/root "../../timing/cron"}
   ; com.github.gersak/shadow-css                 {:local/root "../../shadow-css"}
   com.github.gersak/shadow-css {:mvn/version "0.5.0"}
   dev.gersak/patcho {:mvn/version "0.3.0"}
@@ -82,7 +84,8 @@
                            :exclusions [org.clojure/data.json]}
     org.slf4j/slf4j-nop {:mvn/version "2.0.12"}
     com.cognitect.aws/endpoints {:mvn/version "1.1.12.110"}
-    com.cognitect.aws/s3 {:mvn/version "814.2.991.0"}}
+    com.cognitect.aws/s3 {:mvn/version "814.2.991.0"}
+    slipset/deps-deploy {:mvn/version "0.2.2"}}
    :ns-default build}
   :css
   {:extra-paths ["src/css"]
