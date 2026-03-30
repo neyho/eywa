@@ -25,7 +25,7 @@ echo "POSTGRES_HOST: ${POSTGRES_HOST}"
 echo "POSTGRES_DB: ${POSTGRES_DB}"
 echo "POSTGRES_USER: ${POSTGRES_USER}"
 echo "EYWA_LOG_LEVEL: ${EYWA_LOG_LEVEL}"
-echo "EYWA_IAM_OAUTH_PERSISTENCE: true"
+echo "EYWA_OAUTH_PERSISTENCE: ${EYWA_OAUTH_PERSISTENCE}"
 echo "Admin User: ${ADMIN_USERNAME}"
 echo "================================================"
 
@@ -48,8 +48,9 @@ echo "PostgreSQL is ready!"
 export EYWA_USER="${ADMIN_USERNAME}"
 export EYWA_PASSWORD="${ADMIN_PASSWORD}"
 
-# Enable OAuth persistence to database (requires encryption)
-export EYWA_OAUTH_PERSISTENCE=true
+# OAuth persistence to database (requires encryption)
+# Can be overridden via environment variable
+export EYWA_OAUTH_PERSISTENCE="${EYWA_OAUTH_PERSISTENCE:-false}"
 
 # Initialize EYWA if first run
 if [ ! -f "${EYWA_HOME}/.initialized" ]; then

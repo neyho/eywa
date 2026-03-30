@@ -5,7 +5,8 @@
     [clojure.pprint :refer [pprint]]
     [clojure.string :as str]
     [clojure.tools.build.api :as b]
-    [cognitect.aws.client.api :as aws]))
+    [cognitect.aws.client.api :as aws]
+    [deps-deploy.deps-deploy :as dd]))
 
 (def lib 'neyho/eywa)
 (def class-dir "target/classes")
@@ -130,3 +131,35 @@
 (defn all [& _]
   (release nil)
   (upload nil))
+
+;; Clojars deployment
+(def clojars-lib 'org.neyho/eywa-core)
+(def jar-file (format "target/%s-%s.jar" (name clojars-lib) version))
+
+(defn jar
+  "Build a thin JAR for Clojars (source only, no AOT)"
+  [_]
+  (println "Building JAR for Clojars:" jar-file)
+  (b/delete {:path "target"})
+  (b/write-pom {:class-dir class-dir
+                :lib clojars-lib
+                :version version
+                :basis basis
+                :src-dirs ["src/clj"]
+                :scm {:url "https://github.com/neyho/eywa-core"
+                      :connection "scm:git:git://github.com/neyho/eywa-core.git"
+                      :developerConnection "scm:git:ssh://git@github.com/neyho/eywa-core.git"
+                      :tag (str "v" version)}})
+  (b/copy-dir {:src-dirs ["src/clj" "resources"]
+               :target-dir class-dir})
+  (b/jar {:class-dir class-dir
+          :jar-file jar-file}))
+
+(defn deploy
+  "Deploy to Clojars. Requires CLOJARS_USERNAME and CLOJARS_PASSWORD env vars."
+  [_]
+  (jar nil)
+  (println "Deploying to Clojars:" clojars-lib version)
+  (dd/deploy {:installer :remote
+              :artifact jar-file
+              :pom-file (b/pom-path {:lib clojars-lib :class-dir class-dir})}))

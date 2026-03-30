@@ -18,9 +18,7 @@
    [neyho.eywa.iam.uuids]
    [neyho.eywa.iam.access :as access]
    [neyho.eywa.iam.access.context
-    :refer [*roles*
-            *user*
-            *rls*]]
+    :refer [*roles* *user*]]
    [neyho.eywa.dataset.rls :as rls]
    [neyho.eywa.dataset.enhance :as enhance]
    neyho.eywa.dataset.sql.naming
@@ -1314,7 +1312,7 @@
          nested-arg-keys (letfn [(collect-keys [args]
                                    (when (map? args)
                                      (reduce-kv
-                                      (fn [result k v]
+                                      (fn [result k _]
                                         (-> result
                                             (conj k)
                                             (into (collect-keys (:_where args)))
@@ -1344,7 +1342,7 @@
                                     (contains? distinct-on rkey)
                                     (contains? _agg rkey))
                                  (reduce
-                                  (fn [final {:keys [selections alias]
+                                  (fn [final {:keys [selections alias null-constraint]
                                               new-args :args}]
                                     (let [{:keys [relation from to ref? recursion?]} rdata]
                                       (or
@@ -1352,33 +1350,45 @@
                                        (relation-accessible? relation [from to] #{:read}))
                                       (let [data-as (str (gensym "data_"))]
                                         (assoc final (or alias rkey)
-                                               (merge
-                                                 (clojure.set/rename-keys rdata {:table :relation/table})
-                                                 {:relation/as (str (gensym "link_"))
-                                                  :entity/as data-as
-                                                  :rls/as data-as}
-                                                 (selection->schema
-                                                   (:to rdata) selections
-                                                   (cond-> new-args
-                                                     (and
-                                                       (not= (:from rdata) (:to rdata))
-                                                       (contains? args rkey))
-                                                     (merge (get args rkey))
-                                                     ;;
-                                                     (contains? order-by rkey)
-                                                     (assoc :_order_by (get order-by rkey))
-                                                     ;;
-                                                     (contains? distinct-on rkey)
-                                                     (assoc :_distinct (get distinct-on rkey)))))))))
+                                               (cond->
+                                                 (merge
+                                                   (clojure.set/rename-keys rdata {:table :relation/table})
+                                                   {:relation/as (str (gensym "link_"))
+                                                    :entity/as data-as
+                                                    :rls/as data-as}
+                                                   (selection->schema
+                                                     (:to rdata) selections
+                                                     (cond-> new-args
+                                                       (and
+                                                         (not= (:from rdata) (:to rdata))
+                                                         (contains? args rkey))
+                                                       (merge (get args rkey))
+                                                       ;;
+                                                       (contains? order-by rkey)
+                                                       (assoc :_order_by (get order-by rkey))
+                                                       ;;
+                                                       (contains? distinct-on rkey)
+                                                       (assoc :_distinct (get distinct-on rkey)))))
+                                                 ;; Add null-constraint if present
+                                                 null-constraint
+                                                 (assoc :null-constraint null-constraint))))))
                                   rs
                                   ;; When ref/relation is used in args (e.g. _where) but not selected,
                                   ;; create a minimal entry so the WHERE clause is still generated
-                                  (or (not-empty (get objects rkey))
-                                      (when (or (contains? args rkey)
-                                                (contains? nested-arg-keys rkey))
-                                        [{:selections {:euuid nil}
-                                          :args (or (get args rkey)
-                                                    (get-nested-arg rkey))}])))
+                                  (let [arg-v (get args rkey)
+                                        arg-null-constraint (when (#{:is_null :is_not_null} arg-v) arg-v)]
+                                    (or (when-let [obj-entries (not-empty (get objects rkey))]
+                                          ;; Merge null-constraint from args into selection entries
+                                          (if arg-null-constraint
+                                            (mapv #(assoc % :null-constraint arg-null-constraint) obj-entries)
+                                            obj-entries))
+                                        (when (or (contains? args rkey)
+                                                  (contains? nested-arg-keys rkey))
+                                          (let [v (or arg-v
+                                                      (get-nested-arg rkey))]
+                                            [{:selections {:euuid nil}
+                                              :args (when (map? v) v)
+                                              :null-constraint (when (#{:is_null :is_not_null} v) v)}])))))
                                  rs)
                                rs))
                            nil
@@ -1543,8 +1553,7 @@
                                       (if (some? rdata)
                                         ;; RELATION AGGREGATE: rkey is a relation to another entity
                                         ;; Process ALL entries (for aliases like diana:allocations, charlie:allocations)
-                                        (reduce
-                                         (fn [schema {:keys [alias args selections] :as entry}]
+                                        (reduce(fn [schema {:keys [alias args selections]}]
                                            (let [akey (or alias rkey)
                                                  data-as (str (gensym "data_"))
                                                  ;; Build nested schema to handle refs in _where args
@@ -1775,9 +1784,18 @@
             (if (is-relation? field)
                ;; When specified field is nested relation
               (if-not *deep* [statements data]
-                      (let [[statements' data'] (query-selection->sql (get-in schema [:relations field]))]
-                        [(into statements statements')
-                         (into data data')]))
+                      (let [relation-schema (get-in schema [:relations field])
+                            null-constraint (:null-constraint relation-schema)
+                            [statements' data'] (query-selection->sql relation-schema)]
+                        (cond-> [(into statements statements') (into data data')]
+                          ;; Handle is_null/is_not_null constraint on relation FK field
+                          null-constraint
+                          (update 0 conj
+                                  (format "%s %s"
+                                          field'
+                                          (case null-constraint
+                                            :is_null "is null"
+                                            :is_not_null "is not null"))))))
 
                ;; Handle fields
               (case field
@@ -2688,9 +2706,9 @@
   ([connection schema]
    ; (log/tracef "Searching entity roots for schema:\n%s" (pprint schema))
    ;; Prepare tables target table by inner joining all required tables
-   ; (comment
-   ;   (def focused-schema (focus-order schema))
-   ;   (search-stack-from focused-schema))
+   (comment
+     (def focused-schema (focus-order schema))
+     (search-stack-from focused-schema))
    (let [focused-schema (focus-order schema)
          [[root-table :as tables] from] (search-stack-from focused-schema)
          ;; then prepare where statements and target data
@@ -3043,40 +3061,41 @@
             ;; If there some targets are found with search-entity-roots
             (not-empty targets)
             (let [sql (format
-                       "with recursive tree(_eid,link,path,cycle) as (
-                        select 
+                        "with recursive tree(_eid,link,path,cycle) as (
+                        select
                         g._eid, g.%s, array[g._eid], false
                         from %s g where g._eid in (%s)
                         union all
-                        select g._eid, g.%s, g._eid || path, g._eid=any(path)
+                        select g._eid, g.%s, g._eid || o.path, g._eid=any(o.path)
                         from %s g, tree o
-                        where g._eid=o.link and not cycle
+                        where g._eid=o.link and not o.cycle
                         ) select distinct on (_eid) * from tree"
-                       on' table (clojure.string/join ", " targets)
-                       on' table)
+                        on' table (clojure.string/join ", " targets)
+                        on' table)
                   tree (postgres/execute! connection [sql] *return-type*)
+
                   maybe-roots (set (map :_eid tree))
                   roots (map :_eid (remove (comp maybe-roots :link) tree))
                   ranked-selection (fn [roots]
                                      (let [roots' (clojure.string/join ", " roots)]
                                        (if (not-empty order-by)
                                          (format
-                                          "(select _eid, %s, row_number() over (%s) as _rank from %s where _eid in (%s))"
-                                          on' (modifiers-selection->sql {:args {:_order_by order-by}}) table roots')
+                                           "(select _eid, %s, row_number() over (%s) as _rank from %s where _eid in (%s))"
+                                           on' (modifiers-selection->sql {:args {:_order_by order-by}}) table roots')
                                          (format "(select _eid, %s, _eid as _rank from %s where _eid in (%s))" on' table roots'))))
                   sql-final [(format
-                              "with recursive tree(_eid,link,path,prank,cycle) as (
-                               select 
+                               "with recursive tree(_eid,link,path,prank,cycle) as (
+                               select
                                g._eid, g.%s, array[g._eid],array[g._rank], false
                                from %s g
                                union all
-                               select g._eid, g.%s, path || g._eid, prank || g._rank, g._eid=any(path)
+                               select g._eid, g.%s, o.path || g._eid, o.prank || g._rank, g._eid=any(o.path)
                                from %s g, tree o
-                               where g.%s =o._eid and not cycle
+                               where g.%s =o._eid and not o.cycle
                                ) select * from tree order by prank asc %s"
-                              on' (ranked-selection roots)
-                              on' (ranked-selection maybe-roots) on'
-                              (modifiers-selection->sql {:args (dissoc args :_order_by)}))]]
+                               on' (ranked-selection roots)
+                               on' (ranked-selection maybe-roots) on'
+                               (modifiers-selection->sql {:args (dissoc args :_order_by)}))]]
               (log/tracef
                "[%s] Get entity tree roots\n%s"
                entity-id  (first sql-final))
@@ -3105,13 +3124,13 @@
                                      (format "(select _eid, %s, _eid as _rank from %s)" on' table))
                   sql-final [(format
                               "with recursive tree(_eid,link,path,prank,cycle) as (
-                               select 
+                               select
                                g._eid, g.%s, array[g._eid],array[g._rank], false
                                from %s g
                                union all
-                               select g._eid, g.%s, path || g._eid, prank || g._rank, g._eid=any(path)
+                               select g._eid, g.%s, o.path || g._eid, o.prank || g._rank, g._eid=any(o.path)
                                from %s g, tree o
-                               where g.%s =o._eid and not cycle
+                               where g.%s =o._eid and not o.cycle
                                ) select * from tree order by prank asc %s"
                               on' ranked-init-selection
                               on' ranked-selection on'
@@ -3219,9 +3238,9 @@
                       g._eid, g.%s, 1, array[g._eid], false
                       from %s g where g._eid = any(?)
                       union all
-                      select g._eid, g.%s, o.depth + 1, path || g._eid, g._eid=any(path)
+                      select g._eid, g.%s, o.depth + 1, o.path || g._eid, g._eid=any(o.path)
                       from %s g, tree o
-                      where g._eid=o.link and not cycle
+                      where g._eid=o.link and not o.cycle
                       ) select distinct on (_eid) * from tree"
                      on' table on' table)]
             (log/tracef

@@ -83,20 +83,22 @@ EYWA simplifies complex workflows by combining **identity management** and **dat
 
 ## Quickstart
 
-### 🐳 Docker (Recommended for Showcase)
+### 🐳 Docker (Recommended)
 
-The fastest way to try EYWA is using Docker. This includes PostgreSQL, EYWA Core (IAM + Datacraft), and the frontend UI - everything you need in one command:
+Get EYWA running with a single command - no clone required:
 
 ```bash
-# Clone the repository
+curl -sL https://raw.githubusercontent.com/neyho/eywa-core/main/docker-compose.yml | docker compose -f - up -d
+```
+
+That's it! Access EYWA at **http://localhost:8080/eywa/** with credentials **admin / admin**
+
+#### Alternative: Clone and Run
+
+```bash
 git clone https://github.com/neyho/eywa-core.git
 cd eywa-core
-
-# Start EYWA
-docker-compose up -d
-
-# Access EYWA at http://localhost:8080/eywa/
-# Default credentials: admin / admin
+docker compose up -d
 ```
 
 **What's Included:**
@@ -139,11 +141,13 @@ docker-compose down              # Stop all services
 docker-compose down -v           # Stop and remove data volumes
 ```
 
-**Using Pre-built Image (Coming Soon):**
+**Docker Images:**
+- `neyho/eywa:latest` - Latest stable release
+- `neyho/eywa:2026.02` - Specific version
+
 ```bash
-# Pull from Docker Hub (when published)
-docker pull neyho/eywa-core:latest
-docker-compose up -d
+# Pull manually (optional, compose does this automatically)
+docker pull neyho/eywa:latest
 ```
 
 For detailed Docker documentation, production deployment tips, and troubleshooting, see [docker/README.md](docker/README.md)
