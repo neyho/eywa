@@ -14,7 +14,7 @@
              token-error
              client-id-missmatch
              owner-not-authorized]]
-    [vura.core :as vura]))
+    [timing.core :as vura]))
 
 (defonce ^:dynamic *authorization-codes* (atom nil))
 

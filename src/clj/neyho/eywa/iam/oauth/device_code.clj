@@ -3,7 +3,7 @@
    [clojure.string :as str]
    clojure.java.io
    clojure.pprint
-   [vura.core :as vura]
+   [timing.core :as vura]
    [clojure.tools.logging :as log]
    [clojure.data.json :as json]
    [nano-id.core :as nano-id]

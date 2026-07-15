@@ -21,7 +21,7 @@
      :refer [token-interceptor
              revoke-token-interceptor]]
     [ring.util.codec :as codec]
-    [vura.core :as vura]))
+    [timing.core :as vura]))
 
 (defn generate-code-challenge
   ([code-verifier] (generate-code-challenge code-verifier "S256"))
@@ -95,7 +95,12 @@
                   :as request
                   :keys [prompt redirect_uri state]} request
                  ;;
-                 silent? (and (some? cookie-session) (= prompt "none"))]
+                 ;; Silent flow requires a session that is still alive on
+                 ;; the server — a cookie pointing at a dead session (restart,
+                 ;; logout) must not issue codes.
+                 silent? (and (some? cookie-session)
+                              (= prompt "none")
+                              (some? (core/get-session cookie-session)))]
              ; (def cookie-session cookie-session)
              ; (def silent? silent?)
              ; (def prompt prompt)
@@ -136,6 +141,24 @@
                                                                 (not-empty state) (assoc :state state))))}}))
                    (catch clojure.lang.ExceptionInfo ex
                      (core/handle-request-error (ex-data ex))))
+                 ;; prompt=none without a live session MUST NOT render any
+                 ;; UI — return login_required to the validated redirect_uri
+                 ;; (OIDC Core 3.1.2.6). Otherwise the caller's hidden iframe
+                 ;; silently loads the login page and hangs until timeout.
+                 (= prompt "none")
+                 (try
+                   (validate-client request)
+                   (chain/terminate
+                     (assoc ctx
+                       :response {:status 302
+                                  :headers {"Location" (str redirect_uri "?"
+                                                            (codec/form-encode
+                                                              (cond->
+                                                                {:error "login_required"}
+                                                                (not-empty state) (assoc :state state))))
+                                            "Cache-Control" "no-cache"}}))
+                   (catch clojure.lang.ExceptionInfo ex
+                     (error (ex-data ex))))
                  ;;
                  :else
                  (try
@@ -180,6 +203,13 @@
     (core/clean-sessions)
     (authorization-code/clean-codes)
     (device-code/clean-expired-codes)
+    ;; Sweep *tokens* for entries past their JWT :exp. Necessary because
+    ;; *revoke-old-tokens-on-rotation* defaults to false (fix A for the
+    ;; silent-renew 403 race) — rotated tokens stay in *tokens* until
+    ;; expired. They can't authenticate (iam/unsign-data rejects expired
+    ;; exp) but they accumulate memory. This call is cheap when nothing's
+    ;; expired (one base64+JSON decode per token, no signature check).
+    (token/clean-expired-tokens)
     (core/monitor-client-change)
     (log/debug "[OAuth] Maintenance finish")
     (Thread/sleep period))

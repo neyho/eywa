@@ -39,6 +39,10 @@
                 :groups groups
                 :rls rls}))))
 
+(def ^:private truthy-strings #{"true" "TRUE" "YES" "yes" "y" "1"})
+
+(defn- env-flag-on? [k] (contains? truthy-strings (env k)))
+
 (def authenticate
   {:name :authenticate
    :enter
@@ -58,10 +62,11 @@
          ;;
          (and has-token (not (contains? (get @*tokens* :access_token) token)))
          (chain/terminate not-authorized)
-         ;;
-         (contains?
-          #{"true" "TRUE" "y" "yes" "1"}
-          (env :eywa-iam-allow-public))
+         ;; PUBLIC fallback only when RBAC is actually enforcing — otherwise
+         ;; "allow-public" silently degrades to anonymous full read because
+         ;; *rules*/*scopes* are empty when enforce-access is off.
+         (and (env-flag-on? :eywa-iam-allow-public)
+              (env-flag-on? :eywa-iam-enforce-access))
          (let [public (:euuid *PUBLIC_ROLE*)
                public-user #:eywa {:user (select-keys *PUBLIC_USER* [:_eid :euuid :name :active])
                                    :roles #{public}

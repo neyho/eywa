@@ -21,7 +21,7 @@
     [neyho.eywa.iam.oauth.login :as login]
     [neyho.eywa.iam.oauth.token
      :refer [get-token-session]]
-    [vura.core :as vura]))
+    [timing.core :as vura]))
 
 (s/def ::iss string?)
 (s/def ::sub string?)

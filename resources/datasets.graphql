@@ -4,8 +4,17 @@ type Query {
   @resolve(fn: "neyho.eywa.dataset.graphql/get-deployed-model")
 
 
-  getDeployedModelDocument:String
-  @resolve(fn: "neyho.eywa.dataset.graphql/get-deployed-model-document")
+  """Markdown description of a single entity by name. Returns its
+  attributes (with snake_case GraphQL field names), relations, available
+  GraphQL operations, and worked example queries derived from the model.
+  Pair with `__type` introspection on the client for exact input shapes."""
+  describeEntity(name: String!): String
+  @resolve(fn: "neyho.eywa.dataset.graphql/describe-entity")
+
+  """Names of entities in the deployed model visible to the caller,
+  sorted alphabetically. Cheap to call — useful as a discovery starter."""
+  listEntities: [String]
+  @resolve(fn: "neyho.eywa.dataset.graphql/list-entities")
 }
 
 

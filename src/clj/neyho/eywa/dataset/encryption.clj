@@ -254,6 +254,13 @@
              {:master master
               :master/key master-key})))
        (try
+         ;; Env-key boot path must be self-sufficient: init-deks queries __deks,
+         ;; which otherwise only the `init` CLI / unseal resolvers create. Without
+         ;; this, a fresh DB (e.g. a .env.demo deployment) throws "relation __deks
+         ;; does not exist", the catch below swallows it, and the server silently
+         ;; runs UNENCRYPTED. The sealed/Shamir flow is unaffected (no env key →
+         ;; start no-ops before reaching here).
+         (when-not (dek-table-exists?) (create-dek-table))
          (binding [*master-key* master-key]
            (init-deks))
          (alter-var-root #'*master-key* (fn [_] master-key))

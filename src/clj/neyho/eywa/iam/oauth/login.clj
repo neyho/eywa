@@ -18,7 +18,7 @@
     [neyho.eywa.iam.oauth.page.login :refer [login-html]]
     [neyho.eywa.iam.oauth.token :as token]
     [ring.util.codec :as codec]
-    [vura.core :as vura]))
+    [timing.core :as vura]))
 
 (def redirect-to-login
   {:enter (fn [{{query :query-string} :request

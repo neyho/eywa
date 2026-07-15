@@ -22,7 +22,7 @@
     [neyho.eywa.iam.uuids :as iu]
     [ring.util.codec :as codec]
     [ring.util.response :as response]
-    [vura.core :as vura])
+    [timing.core :as vura])
   (:import
     [java.util Base64]))
 

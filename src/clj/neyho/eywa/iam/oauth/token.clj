@@ -25,9 +25,43 @@
              process-scope
              sign-token]]
     [neyho.eywa.iam.uuids :as iu]
-    [vura.core :as vura]))
+    [timing.core :as vura]))
 
 (defonce ^:dynamic *tokens* (atom nil))
+
+;; Knob: revoke the previous (session, audience) tokens at rotation time?
+;;
+;; false (default, fix A): NEW tokens are stored alongside the OLD ones.
+;;   The OLD access token remains usable until its natural :exp. This kills
+;;   the silent-renew race that produced spurious 403s on in-flight
+;;   requests (2026-06-03 demo incident: token iat 10:28:04, request
+;;   10:37:16, 403 — silent renew at ~9 min revoked the in-flight token).
+;;   Matches what stateless IDPs (Auth0/Okta/Cognito) do by default, just
+;;   layered onto EYWA's stateful *tokens* store. Two trade-offs:
+;;     1. A leaked old access token is usable until exp (up to access-token
+;;        lifetime — default 1h). exp is the security boundary, same as it
+;;        is for every JWT-based IDP.
+;;     2. set-session-tokens overwrites [session :tokens audience], so the
+;;        old token loses its back-reference to the session. kill-session
+;;        on logout walks session :tokens (now only new tokens) and won't
+;;        clean the old entry from *tokens*. Old entries stay in *tokens*
+;;        until expired, but auth still rejects them — iam/unsign-data
+;;        throws on expired exp, claims become nil, authentication.clj
+;;        falls through to 403. So it's a memory leak, not a security
+;;        hole. A periodic sweeper for *tokens* entries past their exp is
+;;        future work; until then, restart pressure on memory comes from
+;;        token volume × access-token lifetime.
+;;
+;; true (original behavior): every rotation revokes the previous (session,
+;;   audience) tokens immediately. Reintroduces the silent-renew race.
+;;   Keep this path available because:
+;;     a. Security-sensitive deployments may prefer the smaller leak window
+;;        and accept the UX cost (frontend must catch 403 + renew + retry).
+;;     b. Once the *tokens* sweeper is implemented, this whole knob may
+;;        become moot — both modes will have the same memory behavior.
+;;
+;; Re-bindable per-call for tests; alter-var-root to flip at runtime.
+(def ^:dynamic *revoke-old-tokens-on-rotation* false)
 
 (let [alphabet "ACDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"]
   (def gen-token (nano-id/custom alphabet 50)))
@@ -116,6 +150,77 @@
 (defmethod session-kill-hook 0
   [_ session]
   (revoke-session-tokens session))
+
+;; ============================================================================
+;; Stale token sweeper
+;;
+;; With *revoke-old-tokens-on-rotation* = false (the new default), rotation
+;; leaves the previous (session, audience) tokens in *tokens* until their
+;; natural :exp. They are auth-harmless once expired (iam/unsign-data throws
+;; on expired :exp → claims become nil → authentication.clj returns 403), but
+;; they sit in the map taking memory until something removes them. This
+;; sweeper is that something.
+;;
+;; The sweep reads :exp from the unsigned base64 payload — no signature
+;; verification — because:
+;;   1. We don't need to trust the token; we just need to know if it's expired.
+;;   2. Signature verification per-token would make the sweep O(n) crypto
+;;      operations. For thousands of tokens that's expensive.
+;;   3. A bogus/unparseable entry (malformed payload, wrong shape) gets
+;;      treated as expired and dropped. Such an entry couldn't authenticate
+;;      anyway (iam/unsign-data would reject it), so dropping it is safe.
+;;
+;; Only *tokens* is swept. *sessions* is not touched: set-session-tokens
+;; overwrites [session :tokens audience] on every rotation, so the session
+;; bookkeeping only ever holds the latest tokens. Rotated tokens stop being
+;; referenced from *sessions* the moment they're rotated past.
+;; ============================================================================
+
+(defn- token-exp
+  "Return the :exp claim (epoch seconds) from a JWT string without
+   verifying its signature. Returns nil if the string is not a parseable
+   JWT or has no :exp claim — caller treats nil as 'expired, drop it'."
+  [^String token]
+  (try
+    (let [parts (str/split token #"\.")]
+      (when (>= (count parts) 2)
+        (let [payload (second parts)
+              decoded (String. (.decode (java.util.Base64/getUrlDecoder) ^String payload))
+              claims (json/read-str decoded :key-fn keyword)]
+          (:exp claims))))
+    (catch Throwable _ nil)))
+
+(defn clean-expired-tokens
+  "Sweep *tokens*: drop any entry whose JWT :exp is in the past or
+   unparseable. Returns a map of {token-key evicted-count}. Cheap when
+   nothing's expired (one base64+JSON decode per token, no signature
+   check).
+
+   Wired into the existing OAuth maintenance agent loop in
+   neyho.eywa.iam.oauth/maintenance alongside clean-sessions and
+   clean-codes. The maintenance loop runs every ~30s by default."
+  []
+  (let [now (quot (System/currentTimeMillis) 1000)
+        evicted (atom {})]
+    (swap! *tokens*
+           (fn [tokens-by-key]
+             (reduce-kv
+               (fn [acc token-key token-map]
+                 (let [kept (reduce-kv
+                              (fn [m token session]
+                                (let [exp (token-exp token)]
+                                  (if (or (nil? exp) (< exp now))
+                                    (do (swap! evicted update token-key (fnil inc 0)) m)
+                                    (assoc m token session))))
+                              {}
+                              token-map)]
+                   (assoc acc token-key kept)))
+               {}
+               tokens-by-key)))
+    (let [result @evicted]
+      (when (seq result)
+        (log/infof "[OAUTH] Token sweep: evicted %s" result))
+      result)))
 
 (comment
   (def data (gen-token))
@@ -234,7 +339,13 @@
                             tokens
                             tokens)]
         (when session
-          (revoke-session-tokens session audience)
+          ;; Gate the immediate-revoke on *revoke-old-tokens-on-rotation*.
+          ;; Default false (fix A): keep old access token valid until its
+          ;; natural :exp so in-flight requests don't 403 across a silent
+          ;; renew. See the var docstring at the top of this ns for the
+          ;; full trade-off and the future-work sweeper note.
+          (when *revoke-old-tokens-on-rotation*
+            (revoke-session-tokens session audience))
           (set-session-tokens session audience signed-tokens))
         (iam/publish
           :oauth.grant/tokens
@@ -288,8 +399,15 @@
                                     (core/get-session session)
                                     [:tokens audience :refresh_token])
             grants (set allowed-grants)]
+        ;; Always revoke the specific refresh token used — RFC 6749
+        ;; refresh-token-reuse detection; a leaked refresh token can mint
+        ;; access tokens indefinitely otherwise.
         (when current-refresh-token (revoke-token :refresh_token current-refresh-token))
-        (when session (revoke-session-tokens session audience))
+        ;; Broad session+audience revoke is gated the same as the
+        ;; authorization_code path — see *revoke-old-tokens-on-rotation*
+        ;; docstring at top of ns.
+        (when (and session *revoke-old-tokens-on-rotation*)
+          (revoke-session-tokens session audience))
         (cond
           ;;
           (not (contains? grants "refresh_token"))

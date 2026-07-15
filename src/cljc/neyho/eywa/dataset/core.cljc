@@ -92,6 +92,12 @@
      :type ::forbidden-conversion
      :suggestion "Decrypt data first or keep as encrypted/json type."}
 
+    ;; reference → string: keeps only the raw entity ID as text and drops the
+    ;; foreign key. Allowed, but the references can no longer be resolved.
+    (and (contains? (:reference type-families) from-type)
+         (= to-type "string"))
+    {:warning (str "Converting " from-type " to string keeps only the raw entity ID as text and drops the foreign key. References can no longer be resolved.")}
+
     ;; GENERAL SAFE CONVERSIONS
 
     ;; Any type can be converted to string (after specific checks above)
