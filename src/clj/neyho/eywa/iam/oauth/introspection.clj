@@ -13,7 +13,6 @@
 
    RFC 7662: https://tools.ietf.org/html/rfc7662"
   (:require
-   [buddy.hashers :as hashers]
    [clojure.data.json :as json]
    [clojure.tools.logging :as log]
    [io.pedestal.interceptor.chain :as chain]
@@ -45,8 +44,7 @@
           nil)
 
         ;; Validate hashed secret
-        (and (some? stored-secret)
-             (not (hashers/check client_secret stored-secret)))
+        (not (core/secret-matches? client_secret stored-secret))
         (do
           (log/debugf "[Introspect] Invalid client secret for %s" client_id)
           nil)

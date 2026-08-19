@@ -13,7 +13,7 @@
     [neyho.eywa.iam.oauth.core :as oauth-core]
     [neyho.eywa.iam.oauth.token :as oauth-token]
     [neyho.eywa.iam.uuids :as iu]
-    [vura.core :as vura]))
+    [timing.core :as vura]))
 
 
 ;;; ============================================================================

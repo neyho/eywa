@@ -80,6 +80,11 @@
       "euuid": "66e06093-2ef7-45d2-a645-7da3d717a2fe",
       "name": "dataset:graphiql",
       "description": "Allows user to introspect GraphQL schema"
+    },
+    {
+      "euuid": "3f8c21ad-6b74-4d59-9f2e-5c0a71e4b8d3",
+      "name": "iam.client:rotate-secret",
+      "description": "Allows user to generate a new secret for an OAuth client. The old secret stops working immediately."
     }
   ]
 }

@@ -2,6 +2,7 @@
   (:require
     [buddy.core.codecs :as codecs]
     [buddy.core.crypto :as crypto]
+    [buddy.hashers :as hashers]
     [clojure.core.async :as async]
     [clojure.data.json :as json]
     clojure.java.io
@@ -72,12 +73,19 @@
 (let [alphabet "ACDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"]
   (def gen-session-id (nano-id/custom alphabet 30)))
 
-(let [default (vura/hours 2)]
+;; Token lifetimes are SECONDS. That is the unit of the JWT `exp` claim, of
+;; OAuth's `expires_in` (RFC 6749 §4.2.2), of the "token-expiry" values the
+;; client settings UI writes ("... (seconds)"), and of what callers like
+;; robotics pass in. vura's helpers return MILLISECONDS, so the defaults have
+;; to be divided down — previously they were not, which made a default access
+;; token live 7200000 seconds (~83 days) instead of 2 hours and reported
+;; `expires_in: 7200000`.
+(let [default (quot (vura/hours 2) 1000)]
   (defn access-token-expiry
     [{{{expiry "access"} "token-expiry"} :settings}]
     (or expiry default)))
 
-(let [default (vura/days 1.5)]
+(let [default (quot (long (vura/days 1.5)) 1000)]
   (defn refresh-token-expiry
     [{{{expiry "refresh"} "token-expiry"} :settings}]
     (long (or expiry default))))
@@ -122,9 +130,14 @@
   java.util.UUID
   (get-resource-owner [this] (get @*resource-owners* this))
   java.lang.String
+  ;; The ::name-mapping entry outlives the record it points at:
+  ;; remove-session-resource-owner dissocs an owner once its last session ends
+  ;; but leaves the name->euuid mapping behind. Following that stale mapping
+  ;; blindly returns nil for a user who simply has no live session right now,
+  ;; so fall through to the database instead of trusting the cache.
   (get-resource-owner [this]
-    (if-some [euuid (get-in @*resource-owners* [::name-mapping this])]
-      (get-resource-owner euuid)
+    (or
+      (some-> (get-in @*resource-owners* [::name-mapping this]) get-resource-owner)
       (let [{:keys [euuid name]
              :as resource-owner} (iam/get-user-details this)]
         (swap! *resource-owners*
@@ -242,13 +255,24 @@
   ([session audience]
    (get-in @*sessions* [session :scopes audience])))
 
+(defn secret-matches?
+  "OAuth Client.Secret is stored hashed; a plaintext leftover from before the
+   Secret string->hashed migration makes buddy throw `Malformed hash` — treat
+   that as a mismatch rather than letting it surface as a 500."
+  [secret known-secret]
+  (boolean
+    (and secret known-secret
+         (try
+           (:valid (hashers/verify secret known-secret))
+           (catch Throwable _ false)))))
+
 (defn clients-match? [session {:keys [client_id client_secret]}]
   (let [{known-id :id
          known-secret :secret} (get-session-client session)]
     (cond
       (not= client_id known-id) false
-      (and client_secret (not= client_secret known-secret)) false
-      (and known-secret (not= client_secret known-secret)) false
+      (and client_secret (not (secret-matches? client_secret known-secret))) false
+      (and known-secret (not (secret-matches? client_secret known-secret))) false
       :else true)))
 
 (def clients-doesnt-match? (complement clients-match?))

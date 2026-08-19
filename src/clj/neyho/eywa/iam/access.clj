@@ -4,11 +4,14 @@
     [clojure.set :as set]
     [clojure.tools.logging :as log]
     [environ.core :refer [env]]
-    [neyho.eywa.data :refer [*ROOT* *EYWA*]]
+    [neyho.eywa.data :refer [*ROOT* *EYWA* *PUBLIC_USER*]]
     [neyho.eywa.dataset :as dataset]
     [neyho.eywa.dataset.core :as core]
-    [neyho.eywa.iam.access.context :refer [*rules* *roles* *user* *scopes*]]
+    [neyho.eywa.iam.access.context :refer [*rules* *roles* *user* *scopes* *enforce*]]
     [neyho.eywa.iam.uuids :as iu]))
+
+(def ^:private truthy-strings #{"true" "TRUE" "YES" "yes" "y" "1"})
+(defn- env-flag-on? [k] (contains? truthy-strings (env k)))
 
 ;; RULES
 
@@ -99,11 +102,22 @@
      (= (:_eid *user*) (:_eid *EYWA*))
      (contains? roles (:euuid *ROOT*)))))
 
+(defn public-user?
+  ([] (public-user? *user*))
+  ([user] (= (:euuid user) (:euuid *PUBLIC_USER*))))
+
+(defn- checked?
+  "Whether roles/rules should actually be evaluated: always for the Public
+  user (its access is only ever what was explicitly granted), otherwise only
+  when EYWA_IAM_ENFORCE_ACCESS is on."
+  []
+  (or *enforce* (public-user?)))
+
 (defn entity-allows?
   ([entity rules] (entity-allows? entity rules *roles*))
   ([entity rules roles]
    (try
-     (if (or (nil? *rules*) (superuser? roles)) true
+     (if (or (superuser? roles) (not (checked?))) true
          (letfn [(ok? [rule]
                    (boolean (not-empty (set/intersection roles (get-in *rules* [:entity entity rule])))))]
            (some ok? rules)))
@@ -115,7 +129,7 @@
   ([relation direction rules] (relation-allows? relation direction rules *roles*))
   ([relation direction rules roles]
    (try
-     (if (or (nil? *rules*) (superuser? roles)) true
+     (if (or (superuser? roles) (not (checked?))) true
          (letfn [(ok? [rule]
                    (boolean
                      (not-empty
@@ -138,7 +152,7 @@
   ([roles scope]
    (or
      (superuser?)
-     (nil? *scopes*)
+     (not (checked?))
      (reduce-kv
        (fn [_ _ scopes]
          (if (contains? scopes scope) (reduced true)
@@ -188,61 +202,65 @@
 
 (defn start
   []
-  (when (#{"true" "TRUE" "YES" "yes" "y" "1"} (env :eywa-iam-enforce-access))
-    (let [model (dataset/deployed-model)
-          role-entity (core/get-entity model iu/user-role)
-          relations (core/focus-entity-relations model role-entity)
-          relation-euuids (set (map :euuid relations))
-          all-euuids (->
-                       relation-euuids
+  ;; *rules*/*scopes* are always loaded (the Public role is checked against
+  ;; them regardless of enforcement); *enforce* just decides whether
+  ;; authenticated roles are checked against them too.
+  (alter-var-root #'*enforce* (constantly (env-flag-on? :eywa-iam-enforce-access)))
+  (let [model (dataset/deployed-model)
+        role-entity (core/get-entity model iu/user-role)
+        relations (core/focus-entity-relations model role-entity)
+        relation-euuids (set (map :euuid relations))
+        all-euuids (->
+                     relation-euuids
                      ;; Disj permissions and users
-                       (disj #uuid "16ca53f4-0fe3-4122-93dd-1e86fd1b58db"
-                             #uuid "1a2cc45d-1301-4fdd-bb02-650362165b37")
-                       (conj iu/user-role))
-          delta-chan (async/chan (async/sliding-buffer 1))]
-      (doseq [element all-euuids]
-        (log/infof "[IAM] Subscribing to dataset delta channel for: %s" element)
-        (async/sub core/*delta-publisher* element delta-chan))
-      ;; Start idle service that will listen on delta changes
-      (async/go-loop
-        [_ (async/<! delta-chan)]
-        (log/debugf "[IAM] Received something at delta channel")
-        ;; When first delta change is received start inner loop
-        (loop [[idle-value] (async/alts!
-                              [;; That will check for new delta values
-                               delta-chan
+                     (disj #uuid "16ca53f4-0fe3-4122-93dd-1e86fd1b58db"
+                           #uuid "1a2cc45d-1301-4fdd-bb02-650362165b37")
+                     (conj iu/user-role))
+        delta-chan (async/chan (async/sliding-buffer 1))]
+    (doseq [element all-euuids]
+      (log/infof "[IAM] Subscribing to dataset delta channel for: %s" element)
+      (async/sub core/*delta-publisher* element delta-chan))
+    ;; Start idle service that will listen on delta changes
+    (async/go-loop
+      [_ (async/<! delta-chan)]
+      (log/debugf "[IAM] Received something at delta channel")
+      ;; When first delta change is received start inner loop
+      (loop [[idle-value] (async/alts!
+                            [;; That will check for new delta values
+                             delta-chan
                              ;; Or timeout
-                               (async/go
-                                 (async/<! (async/timeout 5000))
-                                 ::TIMEOUT)])]
-          (log/debugf "[IAM] Next idle value is: %s" idle-value)
-          ;; IF timeout is received than reload rules
-          (if (= ::TIMEOUT idle-value)
-            (do
-              (log/info "[IAM] Reloading role access!")
-              (load-rules)
-              (load-scopes))
-            ;; Otherwise some other delta has been received and
-            ;; inner loop will be repeated
-            (recur (async/alts!
-                     [;; That will check for new delta values
-                      delta-chan
-                     ;; Or timeout
-                      (async/go
-                        (async/<! (async/timeout 5000))
-                        ::TIMEOUT)]))))
-        ;; when reloading is complete, wait for new delta value
-        ;; and repeat process
-        (recur (async/<! delta-chan)))
-      (load-rules)
-      (load-scopes))))
+                             (async/go
+                               (async/<! (async/timeout 5000))
+                               ::TIMEOUT)])]
+        (log/debugf "[IAM] Next idle value is: %s" idle-value)
+        ;; IF timeout is received than reload rules
+        (if (= ::TIMEOUT idle-value)
+          (do
+            (log/info "[IAM] Reloading role access!")
+            (load-rules)
+            (load-scopes))
+          ;; Otherwise some other delta has been received and
+          ;; inner loop will be repeated
+          (recur (async/alts!
+                   [;; That will check for new delta values
+                    delta-chan
+                    ;; Or timeout
+                    (async/go
+                      (async/<! (async/timeout 5000))
+                      ::TIMEOUT)]))))
+      ;; when reloading is complete, wait for new delta value
+      ;; and repeat process
+      (recur (async/<! delta-chan)))
+    (load-rules)
+    (load-scopes)))
 
-(defn enforced? [] (some? *rules*))
+(defn enforced? [] (boolean *enforce*))
 
 (defn stop
   []
   (alter-var-root #'*rules* (constantly nil))
-  (alter-var-root #'*scopes* (constantly nil)))
+  (alter-var-root #'*scopes* (constantly nil))
+  (alter-var-root #'*enforce* (constantly nil)))
 
 (comment
   (start-enforcing))

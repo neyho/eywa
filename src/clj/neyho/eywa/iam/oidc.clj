@@ -175,7 +175,11 @@
   [tokens session claim]
   (assoc-in tokens [:id_token claim] (standard-claim session claim)))
 
-(let [default (vura/minutes 30)]
+;; Seconds, like access-token-expiry / refresh-token-expiry — the settings UI
+;; writes seconds for all three ("ID token expiry (seconds)"). The default used
+;; to be vura milliseconds while a configured value was seconds, so any client
+;; with "id" set got an id_token that expired ~immediately (600 -> 0.6s).
+(let [default (quot (vura/minutes 30) 1000)]
   (defn id-token-expiry
     [{{{expiry "id"} "token-expiry"} :settings}]
     (or expiry default)))
@@ -192,11 +196,9 @@
              :aud (:id client)
              :sub user-name
              :iat (to-timestamp (vura/date))
-             :exp (-> (vura/date)
-                      vura/date->value
-                      (+ (id-token-expiry client))
-                      vura/value->date
-                      to-timestamp)
+             :exp (-> (System/currentTimeMillis)
+                      (quot 1000)
+                      (+ (id-token-expiry client)))
              :sid session
              :auth_time authorized-at
              :amr [(clojure.core/name (or auth-method :pwd))]
@@ -207,11 +209,9 @@
   (let [client (get-session-client session)]
     (iam/sign-data
       (assoc data
-        :exp (-> (vura/date)
-                 vura/date->value
-                 (+ (id-token-expiry client))
-                 vura/value->date
-                 to-timestamp))
+        :exp (-> (System/currentTimeMillis)
+                 (quot 1000)
+                 (+ (id-token-expiry client))))
       {:alg :rs256})))
 
 (defmethod process-scope "name" [session tokens _] (add-standard-claim tokens session :name))

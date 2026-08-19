@@ -146,6 +146,20 @@
  (dataset/deploy! (current-version))
  (dataset/reload))
 
+;; OAuth Client.Secret "string" -> "hashed", matching IAM 0.80.2. BOTH datasets
+;; describe that entity, so they have to agree: whichever deploys last wins the
+;; attribute, and a 0.1.3 OAuth Store deploying after IAM 0.80.2 would silently
+;; revert the column to plaintext and break client_credentials.
+;;
+;; Same-text-family change, so the ALTER is a plain cast and data survives —
+;; but secrets written before the migration stay plaintext and can never match
+;; again. Confidential clients need a new secret issued once.
+(patch/upgrade
+ ::dataset "0.1.4"
+ (log/info "[IAM] Upgrading OAuth Store: OAuth Client secret to hashed storage")
+ (dataset/deploy! (current-version))
+ (dataset/reload))
+
 (defn level-store
   []
   (let [{current-version :name} (current-version)

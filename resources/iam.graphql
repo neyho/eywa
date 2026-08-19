@@ -1,0 +1,49 @@
+# OAuth Client secrets are stored hashed (IAM 0.80.2+). The stored value is a
+# bcrypt digest, useless to a caller and not something we want handed out, so
+# the field always resolves to null over GraphQL. The secret is shown exactly
+# once, client-side, at the moment it is generated — after that nobody can read
+# it back and a lost secret has to be regenerated.
+type OAuthClient {
+  secret: Hash
+  @resolve(fn: "neyho.eywa.iam/hide-client-secret")
+}
+
+
+# A client allowed the client_credentials grant authenticates as itself, so it
+# needs an identity to carry roles — a SERVICE user named after the client id.
+# Kept as a post-hook on the write rather than created lazily at token time, so
+# the user shows up in IAM the moment the grant is enabled and roles can be
+# assigned to it before anyone tries to use it.
+type Mutation {
+  # All four write forms. The Apps card commits through the *List variants
+  # (eywa.dataset builds "stack <entity> list"), so hooking only the singular
+  # mutations means a client saved from the UI never gets its service user and
+  # then fails at the token endpoint with correct credentials.
+  syncOAuthClient(data: OAuthClientInput): OAuthClient
+  @hook(fn: "neyho.eywa.iam/ensure-service-user")
+
+  stackOAuthClient(data: OAuthClientInput): OAuthClient
+  @hook(fn: "neyho.eywa.iam/ensure-service-user")
+
+  syncOAuthClientList(data: [OAuthClientInput]): [OAuthClient]
+  @hook(fn: "neyho.eywa.iam/ensure-service-user")
+
+  stackOAuthClientList(data: [OAuthClientInput]): [OAuthClient]
+  @hook(fn: "neyho.eywa.iam/ensure-service-user")
+
+  # Rotating a secret is an immediate, irreversible act — it must not ride
+  # along in a form's dirty state waiting for a Save that may never come, or
+  # the caller ends up holding a plaintext secret the server never stored.
+  # Writes on its own and hands the plaintext back exactly once; every later
+  # read of OAuthClient.secret is null.
+  regenerateOAuthClientSecret(euuid: UUID): OAuthClientSecret
+  @resolve(fn: "neyho.eywa.iam/regenerate-client-secret")
+  @protect(scopes: ["iam.client:rotate-secret"])
+}
+
+
+type OAuthClientSecret {
+  euuid: UUID
+  id: String
+  secret: String
+}

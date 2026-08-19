@@ -2,7 +2,7 @@
   (:require
     [clojure.test :refer [deftest is use-fixtures]]
     [clojure.data.json :as json]
-    [vura.core :as vura]
+    [timing.core :as vura]
     [neyho.eywa.iam :as iam]
     [neyho.eywa.iam.oauth2 :as oauth2
      :refer [authorization-request]]))

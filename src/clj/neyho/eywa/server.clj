@@ -18,7 +18,8 @@
     [neyho.eywa.server.interceptors :refer [make-info-interceptor json-response-interceptor make-spa-interceptor]]
     [neyho.eywa.server.interceptors.authentication :as authentication
      :refer [user-data
-             authenticate]]
+             authenticate
+             impersonate]]
     [neyho.eywa.server.interceptors.util :refer [coerce-body]]
     [neyho.eywa.server.ws.graphql :as ws.graphql]))
 
@@ -58,6 +59,9 @@
                       json-response-interceptor
                       lp/error-response-interceptor
                       lp/body-data-interceptor
+                      ;; after body-data (needs [:request :body] as a string),
+                      ;; before the executor binds *user* / *roles* / *rls*
+                      impersonate
                       lp/graphql-data-interceptor
                       lp/status-conversion-interceptor
                       lp/missing-query-interceptor

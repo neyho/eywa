@@ -264,6 +264,127 @@
 (defn remove-client [{:keys [euuid]}]
   (delete-entity iu/app {:euuid euuid}))
 
+;; @resolve for regenerateOAuthClientSecret
+;;
+;; Deliberately NOT a field on the client record: the plaintext exists only in
+;; this response. Writing it through the normal sync path would park a live
+;; secret in the caller's form state until they remember to save — and a
+;; caller that copied it and then discarded would walk away with a secret the
+;; server never stored, while the old one silently kept working.
+(defn regenerate-client-secret
+  [_ {:keys [euuid]} _]
+  (when-not euuid
+    (throw (ex-info "euuid is required" {:type :bad-request})))
+  (when-not (access/entity-allows? iu/app #{:write})
+    (throw (ex-info "Not allowed to modify OAuth clients" {:type :forbidden})))
+  (let [{:keys [id type] :as client} (get-entity iu/app {:euuid euuid}
+                                                 {:euuid nil :id nil :type nil :active nil})]
+    (cond
+      (nil? client)
+      (throw (ex-info "OAuth client not found" {:type :not-found :euuid euuid}))
+
+      ;; A public client has nowhere safe to keep a secret, and the flows that
+      ;; would use one refuse it anyway.
+      (#{:public "public"} type)
+      (throw (ex-info "Public clients cannot have a secret" {:type :forbidden :euuid euuid}))
+
+      :else
+      (let [secret (gen/client-secret)]
+        ;; stack-entity: touch only :secret, so nothing else on the record is
+        ;; disturbed by a rotation.
+        (dataset/stack-entity iu/app {:euuid euuid :secret secret})
+        ;; A rotation is normally a response to a suspected leak, so the old
+        ;; secret losing the ability to buy NEW tokens is not enough — tokens
+        ;; it already bought would stay valid for up to the access-token
+        ;; lifetime. Kill the client's live sessions; kill-session's hooks
+        ;; revoke their tokens. This does log out anyone currently using a
+        ;; browser-facing client, which is the intended meaning of rotating
+        ;; its secret.
+        ;;
+        ;; oauth.core requires THIS namespace, so it can't be required back at
+        ;; load time. requiring-resolve breaks the cycle and keeps the call
+        ;; synchronous — revocation finishes before the new secret is handed
+        ;; out. Deliberately not via iam/publish: that publisher is shared and
+        ;; stalls if any subscriber blocks.
+        (let [sessions-var (requiring-resolve 'neyho.eywa.iam.oauth.core/*sessions*)
+              kill! (requiring-resolve 'neyho.eywa.iam.oauth.core/kill-session)
+              killed (doall
+                       (for [[session {client :client}] @@sessions-var
+                             :when (= client euuid)]
+                         (do (kill! session) session)))]
+          (log/infof "[IAM] Regenerated client secret for %s, revoked %s session(s)"
+                     id (count killed)))
+        {:euuid euuid :id id :secret secret}))))
+
+(defn client-credentials-client?
+  [{{grants "allowed-grants"} :settings}]
+  (boolean (some #{"client_credentials"} grants)))
+
+(defn ensure-service-user!
+  "Idempotently provision the SERVICE user that carries a client_credentials
+   client's roles — `grant-token \"client_credentials\"` resolves the identity
+   by `name` = client id. An existing user is left completely alone, so this
+   never clobbers role assignments."
+  ([client-id] (ensure-service-user! client-id nil))
+  ([client-id roles]
+   (or (get-user-details client-id)
+       (sync-entity
+         iu/user
+         (cond-> {:name client-id
+                  :type :SERVICE
+                  :active true}
+           (seq roles) (assoc :roles (vec roles)))))))
+
+(defn- client-refs
+  "Every {:id/:euuid} a client mutation touched. Handles the singular form
+   (data is a map) and the *List form (data is a vector) — the Apps card commits
+   through stackOAuthClientList, so covering only the singular mutations means
+   the UI save silently skips provisioning."
+  [args value]
+  (let [->seq #(cond (map? %) [%] (sequential? %) % :else nil)]
+    (->> (concat (->seq (:data args)) (->seq value))
+         (keep #(not-empty (select-keys % [:id :euuid])))
+         distinct)))
+
+;; @hook on the OAuth Client write mutations (post — default metric 1, so the
+;; rows already exist when this runs). Re-reads each client rather than trusting
+;; `args`, because a partial sync carries only the fields that changed and
+;; `value` only what the caller selected. Failures are logged, never propagated:
+;; provisioning an identity must not be able to fail the write.
+(defn ensure-service-user
+  [ctx args value]
+  (try
+    (doseq [{:keys [id euuid]} (client-refs args value)
+            :let [client (cond
+                           id (get-client id)
+                           euuid (get-entity iu/app {:euuid euuid} {:id nil :settings nil}))]
+            :when (client-credentials-client? client)]
+      (ensure-service-user! (:id client)))
+    (catch Throwable e
+      (log/error e "Couldn't ensure SERVICE user for OAuth client")))
+  [ctx args value])
+
+(defn add-service-client
+  "Register a service as an OAuth client that can use the client_credentials
+   grant. Creates the confidential client plus the SERVICE user whose name
+   equals the client id — that user carries the roles, so a service's
+   permissions are administered exactly like a person's.
+
+   The plaintext secret is only ever returned here; the column is hashed on
+   write and can't be read back."
+  [{:keys [id name roles settings]
+    :or {id (gen/client-id)}}]
+  (let [secret (gen/client-secret)]
+    (ensure-service-user! id roles)
+    (add-client
+      {:id id
+       :name (or name id)
+       :type :confidential
+       :secret secret
+       :settings (update settings "allowed-grants"
+                         #(vec (distinct (conj (vec %) "client_credentials"))))})
+    {:id id :secret secret}))
+
 (defn set-user
   [user]
   (sync-entity iu/user user))
@@ -364,8 +485,44 @@
                   "exports/role_iam_user.json"]]
       (import-role role))))
 
+;; OAuth Client.Secret: "string" -> "hashed", so client_credentials can
+;; authenticate a client at all. Same text family, so the ALTER is a plain
+;; text cast and the column survives — but any secret written before this
+;; point stays plaintext and can never match hashers/verify again. Every
+;; confidential client has to be issued a new secret once.
+(patch/upgrade
+  ::dataset "0.80.2"
+  (log/info "[IAM] Upgrading OAuth Client secret to hashed storage")
+  (dataset/deploy! (current-version))
+  (dataset/reload)
+  ;; regenerateOAuthClientSecret is @protect'd by "iam.client:rotate-secret",
+  ;; which only exists in the API export. Without re-importing it here an
+  ;; upgraded deployment has the guarded mutation but no scope to grant, so
+  ;; nobody but a superuser can rotate a secret. import-data is stack-entity on
+  ;; stable euuids, so this only adds the missing scope.
+  (log/info "[IAM] Importing EYWA GraphQL API scopes")
+  (binding [*user* *EYWA*]
+    (import-api "exports/api_eywa_graphql.json"))
+  ;; ensure-service-user is a hook on client WRITES, so it only provisions
+  ;; identities for clients saved after it shipped. A client that already had
+  ;; client_credentials enabled authenticates fine and then fails with "No
+  ;; active service user is configured for this client" — correct secret,
+  ;; missing identity. Backfill them once here so upgrading doesn't leave
+  ;; working credentials that cannot get a token.
+  (binding [*user* *EYWA*]
+    (doseq [{:keys [id] :as client} (search-entity iu/app {} {:id nil :settings nil})
+            :when (client-credentials-client? client)]
+      (when-not (get-user-details id)
+        (log/infof "[IAM] Provisioning missing SERVICE user for client %s" id)
+        (ensure-service-user! id)))))
+
 (comment
   (patch/version ::dataset))
+
+;; @resolve for OAuthClient.secret — the column holds a bcrypt digest since
+;; 0.80.2, so there is nothing worth returning. Same shape as
+;; neyho.eywa.git.service/hide-ssh-private.
+(defn hide-client-secret [_ _ _] nil)
 
 (defn start
   []
@@ -373,7 +530,7 @@
   (try
     ;; TODO - Roles and permission shema should be initialized from database
     ;; and tracked by relations and entity changes just like in neyho.eywa.iam.access namespace
-    ; (lacinia/add-shard ::graphql (slurp (io/resource "iam.graphql")))
+    (lacinia/add-shard ::graphql (slurp (io/resource "iam.graphql")))
     (ensure-public)
     (level-iam)
     (dataset/bind-service-user #'*PUBLIC_USER*)

@@ -430,6 +430,15 @@
    (log/info "Initializing Datasets...")
    (comment
      (def db *db*))
+   ;; Fail loudly and specifically. This used to swallow everything with a
+   ;; generic "Couldn't initialize Datasets..." and carry on, so the FIRST
+   ;; error anyone saw came from bind-service-user below — "entity is not
+   ;; deployed", which reads as a healthy database missing one model. The real
+   ;; causes are a missing DB connection or a model that can't be read, and
+   ;; they should say so where they happen.
+   (when (nil? db)
+     (throw (ex-info "Cannot initialize Datasets - no database connection"
+                     {:exception/type :db-not-connected})))
    (try
      (init-delta-pipe)
      (cgen/add-encoder
@@ -442,7 +451,14 @@
      (lacinia/add-directive :hook wrap-hooks)
      (lacinia/add-shard ::dataset-directives (slurp (io/resource "dataset_directives.graphql")))
      (lacinia/add-shard ::datasets (slurp (io/resource "datasets.graphql")))
-     (catch Throwable e (log/errorf e "Couldn't initialize Datasets...")))
+     (catch Throwable e
+       (log/errorf e "Couldn't initialize Datasets...")
+       (throw
+         (ex-info
+           (str "Couldn't initialize Datasets: " (ex-message e))
+           {:exception/type :dataset-initialization-failed
+            :db (select-keys db [:host :port :db :user])}
+           e))))
    (binding [dataset/*return-type* :edn]
      (bind-service-user #'neyho.eywa.data/*EYWA*))
    nil))

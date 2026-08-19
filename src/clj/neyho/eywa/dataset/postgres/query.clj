@@ -78,12 +78,27 @@
 (defn deployed-schema-entity [entity-id]
   (if-some [entity (get (deployed-schema) entity-id)]
     entity
-    (throw
-     (ex-info
-      "Trying to get schema for entity that is not deployed"
-      {:exception/type :entity-not-deployed
-       :entity entity-id
-       :available (keys (deployed-schema))}))))
+    ;; An EMPTY schema is a different failure from a missing entity, and saying
+    ;; "entity X is not deployed" for it is actively misleading — it reads as
+    ;; "the database is fine, that one model just isn't there", when in fact
+    ;; nothing loaded at all (no DB connection, or the deployed model couldn't
+    ;; be read). Distinguish the two so the first error points at the real
+    ;; cause instead of a symptom several steps downstream.
+    (if (empty? (deployed-schema))
+      (throw
+       (ex-info
+        (if (nil? neyho.eywa.db/*db*)
+          "No database connection - dataset schema was never loaded"
+          "Dataset schema is empty - no model is deployed, or the deployed model failed to load")
+        {:exception/type :schema-not-loaded
+         :db-connected? (some? neyho.eywa.db/*db*)
+         :entity entity-id}))
+      (throw
+       (ex-info
+        "Trying to get schema for entity that is not deployed"
+        {:exception/type :entity-not-deployed
+         :entity entity-id
+         :available (keys (deployed-schema))})))))
 
 (defn distribute-fields
   "Given deployed schema fields returns map
